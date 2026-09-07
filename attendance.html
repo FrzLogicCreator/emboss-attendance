@@ -517,19 +517,18 @@ async function saveAttendance(){
   btn.classList.add('busy');
   btn.disabled = true;
 
-  // Safety timer — ALWAYS unlocks after 15 seconds no matter what
+  // Safety — always unlocks after 15 seconds
   const safety = setTimeout(()=>{
     SAVE_BUSY = false;
     btn.classList.remove('busy');
-    btn.disabled = !GPS_OK;
+    btn.disabled = false; // ← always re-enable, never tie to GPS
     showToast('⚠️ Request timed out — please try again','t-red');
   }, 15000);
 
   try{
-    // FIX 2: Use Saudi time for all timestamps
-    const nowSaudi  = getSaudiTime();
-    const today     = nowSaudi.toLocaleDateString('en-CA');
-    const isFriday  = nowSaudi.getDay() === 5;
+    const nowSaudi = getSaudiTime();
+    const today    = nowSaudi.toLocaleDateString('en-CA');
+    const isFriday = nowSaudi.getDay() === 5;
 
     if(ACTION === 'in'){
       const{error} = await db.from('attendance').insert([{
@@ -548,17 +547,16 @@ async function saveAttendance(){
       showDone('✅', SELECTED.name, 'Clocked In at ' + formatSaudiTime(nowSaudi), 'Clock In Recorded');
 
     } else {
-      // Find open record from today or yesterday
       const yesterday = new Date(nowSaudi);
       yesterday.setDate(yesterday.getDate()-1);
       const yStr = yesterday.toLocaleDateString('en-CA');
 
-      const{data:openRecs, error:fetchErr} = await db.from('attendance')
+      const{data:openRecs,error:fetchErr} = await db.from('attendance')
         .select('*')
         .eq('employee_id', SELECTED.id)
         .is('clock_out', null)
-        .in('date', [today, yStr])
-        .order('clock_in', {ascending:false})
+        .in('date',[today, yStr])
+        .order('clock_in',{ascending:false})
         .limit(1);
 
       if(fetchErr) throw fetchErr;
@@ -566,17 +564,13 @@ async function saveAttendance(){
       if(!openRec) throw new Error('No active clock-in found');
 
       const clockInTime = new Date(openRec.clock_in);
-
-      // FIX: Midnight split logic
-      const midnight = new Date(clockInTime);
-      midnight.setHours(24,0,0,0); // next midnight
+      const midnight    = new Date(clockInTime);
+      midnight.setHours(24,0,0,0);
 
       if(nowSaudi > midnight){
-        // Split at midnight
         const hoursDay1 = (midnight - clockInTime) / 3600000;
         const hoursDay2 = (nowSaudi - midnight)    / 3600000;
 
-        // Update Day 1 record
         await db.from('attendance').update({
           clock_out:    midnight.toISOString(),
           hours_worked: parseFloat(hoursDay1.toFixed(2)),
@@ -585,8 +579,7 @@ async function saveAttendance(){
           lng_out:      USER_GPS.lng
         }).eq('id', openRec.id);
 
-        // Create Day 2 record
-        const day2Str = midnight.toLocaleDateString('en-CA');
+        const day2Str   = midnight.toLocaleDateString('en-CA');
         const isFriday2 = midnight.getDay() === 5;
         await db.from('attendance').insert([{
           employee_id:  SELECTED.id,
@@ -602,20 +595,15 @@ async function saveAttendance(){
           gps_verified: GPS_OK
         }]);
 
-        // Update summaries for both days
         updateDailySummary(SELECTED.id, openRec.date, openRec.is_friday).catch(()=>{});
         updateDailySummary(SELECTED.id, day2Str, isFriday2).catch(()=>{});
 
-        const totalHrs = hoursDay1 + hoursDay2;
         clearTimeout(safety);
-        const inTimeStr  = formatSaudiTime(clockInTime);
-        const outTimeStr = formatSaudiTime(nowSaudi);
         showDone('🕐', SELECTED.name,
-          `${inTimeStr} → ${outTimeStr} · ${totalHrs.toFixed(2)} hrs total`,
+          formatSaudiTime(clockInTime)+' → '+formatSaudiTime(nowSaudi)+' · '+(hoursDay1+hoursDay2).toFixed(2)+' hrs',
           'Clock Out Recorded');
 
       } else {
-        // Same day — simple clock out
         const hoursWorked = (nowSaudi - clockInTime) / 3600000;
         await db.from('attendance').update({
           clock_out:    nowSaudi.toISOString(),
@@ -626,28 +614,26 @@ async function saveAttendance(){
         }).eq('id', openRec.id);
 
         updateDailySummary(SELECTED.id, openRec.date, openRec.is_friday).catch(()=>{});
-
         clearTimeout(safety);
-        const inTimeStr  = formatSaudiTime(clockInTime);
-        const outTimeStr = formatSaudiTime(nowSaudi);
         showDone('🕐', SELECTED.name,
-          `${inTimeStr} → ${outTimeStr} · ${hoursWorked.toFixed(2)} hrs`,
+          formatSaudiTime(clockInTime)+' → '+formatSaudiTime(nowSaudi)+' · '+hoursWorked.toFixed(2)+' hrs',
           'Clock Out Recorded');
       }
     }
+
   }catch(e){
     clearTimeout(safety);
     console.error('Save error:',e);
-    showToast('⚠️ ' + (e.message||'Unknown error'),'t-red');
-    btn.classList.remove('busy');
-    btn.disabled = false;
+    showToast('⚠️ '+(e.message||'Error saving'),'t-red');
+  } finally {
+    // ALWAYS reset — no matter what happens
     SAVE_BUSY = false;
+    const b = document.getElementById('btn-confirm');
+    if(b){ b.classList.remove('busy'); b.disabled = false; }
   }
 }
 
-// ════════════════════════════════
-// DAILY SUMMARY
-// ════════════════════════════════
+
 async function updateDailySummary(empId, date, isFri){
   try{
     const{data:emp} = await db.from('employees')
