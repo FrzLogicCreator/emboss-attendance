@@ -351,7 +351,7 @@ async function selectEmployee(id, name){
     if(openRec){
       ACTION = 'out';
       const inTime = new Date(openRec.clock_in);
-      document.getElementById('status-time').textContent = 'Clocked in since ' + formatTime(inTime);
+      document.getElementById('status-time').textContent = 'Clocked in since ' + formatSaudiTime(inTime);
       document.getElementById('status-badge').className = 'status-badge badge-in';
       document.getElementById('status-badge').textContent = '✅ Currently In';
       document.getElementById('btn-clockin').style.display  = 'none';
