@@ -423,9 +423,10 @@ function updateGPSDisplay(){
     }
   });
 
-  // FIX 3: Block confirm button if GPS failed
+  // Show GPS status but only warn — don't block clock out
+  // GPS already checked on status screen
   const btn = document.getElementById('btn-confirm');
-  if(btn) btn.disabled = !GPS_OK;
+  if(btn) btn.disabled = false; // Always allow confirm
 }
 
 function calcDist(lat1,lng1,lat2,lng2){
@@ -508,19 +509,19 @@ function cancelCamera(){
 // FIX 2: SAVE — Saudi time + safety timer + midnight split
 // ════════════════════════════════
 async function saveAttendance(){
+  // Prevent double tap
   if(SAVE_BUSY) return;
-  if(!GPS_OK){ showToast('⚠️ Must be at branch to clock in','t-red'); return; }
-
   SAVE_BUSY = true;
+
   const btn = document.getElementById('btn-confirm');
   btn.classList.add('busy');
   btn.disabled = true;
 
-  // Safety timer — always unlocks after 15 seconds
+  // Safety timer — ALWAYS unlocks after 15 seconds no matter what
   const safety = setTimeout(()=>{
     SAVE_BUSY = false;
     btn.classList.remove('busy');
-    btn.disabled = false;
+    btn.disabled = !GPS_OK;
     showToast('⚠️ Request timed out — please try again','t-red');
   }, 15000);
 
@@ -637,10 +638,9 @@ async function saveAttendance(){
   }catch(e){
     clearTimeout(safety);
     console.error('Save error:',e);
-    showToast('⚠️ ' + e.message,'t-red');
+    showToast('⚠️ ' + (e.message||'Unknown error'),'t-red');
     btn.classList.remove('busy');
     btn.disabled = false;
-  } finally {
     SAVE_BUSY = false;
   }
 }
