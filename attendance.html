@@ -438,12 +438,18 @@ function calcDist(lat1,lng1,lat2,lng2){
 // FIX 1: CAMERA — Proper stream cleanup
 // ════════════════════════════════
 function stopCamera(){
-  if(STREAM){
-    try{ STREAM.getTracks().forEach(t=>t.stop()); }catch(e){}
-    STREAM = null;
+  try{
+    if(STREAM){
+      STREAM.getTracks().forEach(t=>{ try{t.stop();}catch(e){} });
+      STREAM = null;
+    }
     const v = document.getElementById('videoEl');
-    if(v){ v.srcObject = null; }
-  }
+    if(v){
+      v.pause();
+      v.srcObject = null;
+      v.load(); // Force browser to release camera
+    }
+  }catch(e){ console.warn('stopCamera:',e); }
 }
 
 async function startCamera(action){
@@ -451,13 +457,19 @@ async function startCamera(action){
   stopCamera(); // Always stop first
   go('s-camera');
   // Small delay before opening new stream
-  await new Promise(r=>setTimeout(r,300));
+  await new Promise(r=>setTimeout(r,600)); // Wait for browser to fully release camera
   try{
-    STREAM = await navigator.mediaDevices.getUserMedia({
-      video:{facingMode:'user', width:{ideal:640}, height:{ideal:480}},
-      audio:false
-    });
-    document.getElementById('videoEl').srcObject = STREAM;
+    // Try front camera first, fall back to any camera
+    let constraints = {video:{facingMode:'user', width:{ideal:640}, height:{ideal:480}}, audio:false};
+    try{
+      STREAM = await navigator.mediaDevices.getUserMedia(constraints);
+    }catch(e1){
+      // Fallback: try any camera
+      STREAM = await navigator.mediaDevices.getUserMedia({video:true, audio:false});
+    }
+    const v = document.getElementById('videoEl');
+    v.srcObject = STREAM;
+    await v.play();
   }catch(e){
     showToast('Camera error: '+e.message,'t-red');
     go('s-status');
