@@ -389,18 +389,23 @@ function getGPS(){
     pos=>{
       USER_GPS = {lat:pos.coords.latitude, lng:pos.coords.longitude};
       if(BRANCH_GPS.lat && BRANCH_GPS.lng &&
-         BRANCH_GPS.lat !== 0 && BRANCH_GPS.lng !== 0){
-        const dist = calcDist(USER_GPS.lat, USER_GPS.lng, BRANCH_GPS.lat, BRANCH_GPS.lng);
+         parseFloat(BRANCH_GPS.lat) !== 0 &&
+         parseFloat(BRANCH_GPS.lng) !== 0){
+        const dist = calcDist(USER_GPS.lat, USER_GPS.lng,
+                              parseFloat(BRANCH_GPS.lat),
+                              parseFloat(BRANCH_GPS.lng));
         GPS_OK = dist <= BRANCH_GPS.radius;
-        console.log('Distance from branch:', Math.round(dist)+'m', 'Radius:', BRANCH_GPS.radius+'m');
+        console.log('Distance:',Math.round(dist)+'m | Radius:',BRANCH_GPS.radius+'m | OK:',GPS_OK);
       } else {
-        GPS_OK = true; // Branch GPS not set yet
+        // Branch GPS not set in database — allow all
+        GPS_OK = true;
       }
       updateGPSDisplay();
     },
     err=>{
+      // GPS error — allow clock-in (do not punish employee)
       console.warn('GPS error:', err.message);
-      GPS_OK = true; // Allow on GPS failure
+      GPS_OK = true;
       updateGPSDisplay();
     },
     {enableHighAccuracy:false, timeout:8000, maximumAge:60000}
@@ -408,6 +413,7 @@ function getGPS(){
 }
 
 function updateGPSDisplay(){
+  // Update GPS message boxes on both status and confirm screens
   ['gps-status-box','gps-confirm-box'].forEach(id=>{
     const el = document.getElementById(id);
     if(!el) return;
@@ -416,17 +422,28 @@ function updateGPSDisplay(){
       el.textContent = '📍 Location verified — You are at the branch';
     } else if(USER_GPS.lat){
       el.className = 'gps-status gps-fail';
-      el.textContent = '📍 You must be at the branch to clock in';
+      el.textContent = '📍 You are not at the branch — clock in blocked';
     } else {
       el.className = 'gps-status gps-check';
       el.textContent = '📍 Checking your location...';
     }
   });
 
-  // Show GPS status but only warn — don't block clock out
-  // GPS already checked on status screen
-  const btn = document.getElementById('btn-confirm');
-  if(btn) btn.disabled = false; // Always allow confirm
+  // BLOCK clock-in button on status screen if GPS not verified
+  // Clock OUT is never blocked — employee already inside
+  const btnIn  = document.getElementById('btn-clockin');
+  if(btnIn){
+    btnIn.disabled = !GPS_OK;
+    btnIn.style.opacity = GPS_OK ? '1' : '0.4';
+    btnIn.title = GPS_OK ? '' : 'You must be at the branch';
+  }
+  // Clock out always enabled
+  const btnOut = document.getElementById('btn-clockout');
+  if(btnOut){ btnOut.disabled = false; btnOut.style.opacity = '1'; }
+
+  // Confirm screen — always enabled (GPS checked at step 2)
+  const btnConfirm = document.getElementById('btn-confirm');
+  if(btnConfirm){ btnConfirm.disabled = false; }
 }
 
 function calcDist(lat1,lng1,lat2,lng2){
