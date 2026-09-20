@@ -551,7 +551,7 @@ async function saveAttendance(){
       const{error} = await db.from('attendance').insert([{
         employee_id:  SELECTED.id,
         branch_id:    BRANCH_ID,
-        clock_in:     nowSaudi.toISOString(),
+        clock_in:     new Date().toISOString(), // Store real UTC
         date:         today,
         is_friday:    isFriday,
         photo_in:     PHOTO_B64,
@@ -733,18 +733,25 @@ function go(id){
 // FIX 2: SAUDI TIME HELPERS
 // ════════════════════════════════
 function getSaudiTime(){
-  // Saudi Arabia is always UTC+3 — no daylight saving
+  // Correct Saudi time using Asia/Riyadh timezone
+  // This works on all devices regardless of device timezone setting
   const now = new Date();
-  return new Date(now.getTime() + (3 * 60 * 60 * 1000) - (now.getTimezoneOffset() * 60 * 1000));
+  const saudiStr = now.toLocaleString('en-US', {timeZone:'Asia/Riyadh'});
+  return new Date(saudiStr);
 }
 
 function todayStr(){
-  return getSaudiTime().toLocaleDateString('en-CA');
+  // Get today date in Saudi Arabia timezone
+  return new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Riyadh'});
 }
 
 function formatSaudiTime(d){
-  // If d is already Saudi time, format it
-  return d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+  // Convert any date to Saudi Arabia time for display
+  return d.toLocaleTimeString('en-GB',{
+    hour:'2-digit',
+    minute:'2-digit',
+    timeZone:'Asia/Riyadh'
+  });
 }
 
 // ════════════════════════════════
