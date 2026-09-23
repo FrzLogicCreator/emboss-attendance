@@ -332,14 +332,12 @@ async function selectEmployee(id, name){
   document.getElementById('loading-txt').textContent = 'Loading status...';
   try{
     const today    = todayStr();
-    const nowSaudiStr = getSaudiTime(); const nowSaudi = new Date(nowSaudiStr);
+    const nowSaudi = new Date(); // UTC — standard for storage and calculation
 
-    // Yesterday in Saudi time
-    const yDate = new Date(nowSaudi);
-    yDate.setDate(yDate.getDate()-1);
-    const yStr = yDate.getFullYear()+'-'+
-      String(yDate.getMonth()+1).padStart(2,'0')+'-'+
-      String(yDate.getDate()).padStart(2,'0');
+    // Yesterday in Saudi date
+    const saudiNow = getSaudiTime();
+    const yDate    = new Date(saudiNow.getTime() - 24*60*60*1000);
+    const yStr     = yDate.toISOString().split('T')[0];
 
     // Get employee iqama number
     const{data:empData} = await db.from('employees')
@@ -365,7 +363,7 @@ async function selectEmployee(id, name){
       if(hoursOpen > 15){
         const autoClose = new Date(clockInTime.getTime() + 15*3600000);
         await db.from('attendance').update({
-          clock_out:    toSaudiString(autoClose),
+          clock_out:    autoClose.toISOString(),
           hours_worked: 15
         }).eq('id', openRec.id);
         updateDailySummary(id, openRec.date, openRec.is_friday).catch(()=>{});
@@ -583,15 +581,15 @@ async function saveAttendance(){
   }, 15000);
 
   try{
-    const nowSaudiStr = getSaudiTime(); const nowSaudi = new Date(nowSaudiStr);
-    const today    = nowSaudi.toLocaleDateString('en-CA');
+    const nowSaudi = new Date(); // UTC — standard for storage and calculation
+    const today    = todayStr(); // Saudi date
     const isFriday = nowSaudi.getDay() === 5;
 
     if(ACTION === 'in'){
       const{error} = await db.from('attendance').insert([{
         employee_id:  SELECTED.id,
         branch_id:    BRANCH_ID,
-        clock_in:     nowSaudiStr, // Saudi time — stored as-is in DB
+        clock_in:     nowSaudi.toISOString(),
         date:         today,
         is_friday:    isFriday,
         photo_in:     PHOTO_B64,
@@ -621,28 +619,37 @@ async function saveAttendance(){
       if(!openRec) throw new Error('No active clock-in found');
 
       const clockInTime = new Date(openRec.clock_in);
-      const midnight    = new Date(clockInTime);
-      midnight.setHours(24,0,0,0);
+      // Saudi midnight = UTC 21:00 of the clock-in day
+      // Because Saudi is UTC+3, so 00:00 Saudi = 21:00 UTC previous day
+      const clockInSaudi = new Date(clockInTime.getTime() + 3*60*60*1000);
+      const midnight = new Date(Date.UTC(
+        clockInSaudi.getUTCFullYear(),
+        clockInSaudi.getUTCMonth(),
+        clockInSaudi.getUTCDate() + 1, // next calendar day in Saudi
+        0, 0, 0 // 00:00 Saudi = 21:00 UTC
+      ) - 3*60*60*1000); // subtract 3hrs to get UTC equivalent
 
       if(nowSaudi > midnight){
         const hoursDay1 = (midnight - clockInTime) / 3600000;
         const hoursDay2 = (nowSaudi - midnight)    / 3600000;
 
         await db.from('attendance').update({
-          clock_out:    toSaudiString(midnight),
+          clock_out:    midnight.toISOString(),
           hours_worked: parseFloat(hoursDay1.toFixed(2)),
           photo_out:    PHOTO_B64,
           lat_out:      USER_GPS.lat,
           lng_out:      USER_GPS.lng
         }).eq('id', openRec.id);
 
-        const day2Str   = midnight.toLocaleDateString('en-CA');
-        const isFriday2 = midnight.getDay() === 5;
+        // Day 2 date = Saudi date after midnight
+        const midnightSaudi = new Date(midnight.getTime() + 3*60*60*1000);
+        const day2Str = midnightSaudi.toISOString().split('T')[0];
+        const isFriday2 = midnightSaudi.getUTCDay() === 5;
         await db.from('attendance').insert([{
           employee_id:  SELECTED.id,
           branch_id:    BRANCH_ID,
-          clock_in:     toSaudiString(midnight),
-          clock_out:    nowSaudiStr,
+          clock_in:     midnight.toISOString(),
+          clock_out:    nowSaudi.toISOString(),
           date:         day2Str,
           is_friday:    isFriday2,
           hours_worked: parseFloat(hoursDay2.toFixed(2)),
@@ -663,7 +670,7 @@ async function saveAttendance(){
       } else {
         const hoursWorked = (nowSaudi - clockInTime) / 3600000;
         await db.from('attendance').update({
-          clock_out:    nowSaudiStr,
+          clock_out:    nowSaudi.toISOString(),
           hours_worked: parseFloat(hoursWorked.toFixed(2)),
           photo_out:    PHOTO_B64,
           lat_out:      USER_GPS.lat,
@@ -773,49 +780,26 @@ function go(id){
 // FIX 2: SAUDI TIME HELPERS
 // ════════════════════════════════
 function getSaudiTime(){
-  // Returns Saudi time as ISO string WITHOUT timezone suffix
-  // Storing without Z means Supabase saves it as-is (no UTC conversion)
-  // Database will show Saudi time directly ✅
-  const now = new Date();
-  const opts = {
-    timeZone:'Asia/Riyadh',
-    year:'numeric',month:'2-digit',day:'2-digit',
-    hour:'2-digit',minute:'2-digit',second:'2-digit',
-    hour12:false
-  };
-  const parts = new Intl.DateTimeFormat('en-GB',opts).formatToParts(now);
-  const p = {};
-  parts.forEach(x=>{ p[x.type]=x.value; });
-  // Return as string: YYYY-MM-DDTHH:MM:SS (no Z = no UTC conversion)
-  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}`;
+  // Returns current time shifted to Saudi Arabia (UTC+3)
+  // Used ONLY for date checking and display — NOT for storage
+  return new Date(Date.now() + 3*60*60*1000);
 }
 
-// Convert any Date object to Saudi time string for storage
-function toSaudiString(dateObj){
-  const opts = {
-    timeZone:'Asia/Riyadh',
-    year:'numeric',month:'2-digit',day:'2-digit',
-    hour:'2-digit',minute:'2-digit',second:'2-digit',
-    hour12:false
-  };
-  const parts = new Intl.DateTimeFormat('en-GB',opts).formatToParts(dateObj);
-  const p = {};
-  parts.forEach(x=>{ p[x.type]=x.value; });
-  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}`;
-}
+
+
 
 function todayStr(){
-  // Extract date part from Saudi time string: 'YYYY-MM-DDTHH:MM:SS'
-  return getSaudiTime().split('T')[0];
+  // Use Saudi time to get correct local date
+  const saudi = getSaudiTime();
+  return saudi.toISOString().split('T')[0];
 }
 
 function formatSaudiTime(d){
-  // Convert any date to Saudi Arabia time for display
-  return d.toLocaleTimeString('en-GB',{
-    hour:'2-digit',
-    minute:'2-digit',
-    timeZone:'Asia/Riyadh'
-  });
+  // Add 3 hours to UTC time for Saudi display
+  // Works whether d is a Date object or ISO string
+  const date = (d instanceof Date) ? d : new Date(d);
+  const saudi = new Date(date.getTime() + 3*60*60*1000);
+  return saudi.toUTCString().slice(17,22); // HH:MM
 }
 
 // ════════════════════════════════
