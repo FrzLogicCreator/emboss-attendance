@@ -331,50 +331,90 @@ async function selectEmployee(id, name){
   go('s-loading');
   document.getElementById('loading-txt').textContent = 'Loading status...';
   try{
-    const today = todayStr();
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate()-1);
-    const yStr = yesterday.toLocaleDateString('en-CA');
+    const today    = todayStr();
+    const nowSaudi = getSaudiTime();
 
+    // Yesterday in Saudi time
+    const yDate = new Date(nowSaudi);
+    yDate.setDate(yDate.getDate()-1);
+    const yStr = yDate.getFullYear()+'-'+
+      String(yDate.getMonth()+1).padStart(2,'0')+'-'+
+      String(yDate.getDate()).padStart(2,'0');
+
+    // Get employee iqama number
+    const{data:empData} = await db.from('employees')
+      .select('iqama_number').eq('id',id).maybeSingle();
+    const iqama = empData?.iqama_number || null;
+
+    // Find open attendance record
     const{data,error} = await db.from('attendance')
       .select('*')
       .eq('employee_id', id)
       .is('clock_out', null)
-      .in('date', [today, yStr])
-      .order('clock_in', {ascending:false})
+      .in('date',[today, yStr])
+      .order('clock_in',{ascending:false})
       .limit(1);
-
     if(error) throw error;
-    const openRec = data && data.length > 0 ? data[0] : null;
 
-    // Determine action
+    let openRec = data && data.length > 0 ? data[0] : null;
+
+    // AUTO CLOSE after 15 hours
+    if(openRec){
+      const clockInTime = new Date(openRec.clock_in);
+      const hoursOpen   = (nowSaudi - clockInTime) / 3600000;
+      if(hoursOpen > 15){
+        const autoClose = new Date(clockInTime.getTime() + 15*3600000);
+        await db.from('attendance').update({
+          clock_out:    autoClose.toISOString(),
+          hours_worked: 15
+        }).eq('id', openRec.id);
+        updateDailySummary(id, openRec.date, openRec.is_friday).catch(()=>{});
+        openRec = null;
+        showToast('Previous shift auto-closed after 15 hours','t-gold');
+      }
+    }
+
+    // Show name + iqama last 3 digits
+    const nameEl = document.getElementById('status-name');
+    if(iqama && iqama.length >= 3){
+      nameEl.innerHTML = name +
+        '<div style="font-size:.72rem;color:var(--pink);margin-top:4px;font-weight:600">Iqama: ••• '+
+        iqama.slice(-3)+'</div>';
+    } else {
+      nameEl.textContent = name;
+    }
+
+    // Set action
     if(openRec){
       ACTION = 'out';
       const inTime = new Date(openRec.clock_in);
-      document.getElementById('status-time').textContent = 'Clocked in since ' + formatSaudiTime(inTime);
-      document.getElementById('status-badge').className = 'status-badge badge-in';
+      document.getElementById('status-time').textContent  = 'Clocked in since '+formatSaudiTime(inTime);
+      document.getElementById('status-badge').className   = 'status-badge badge-in';
       document.getElementById('status-badge').textContent = '✅ Currently In';
       document.getElementById('btn-clockin').style.display  = 'none';
       document.getElementById('btn-clockout').style.display = 'flex';
     } else {
       ACTION = 'in';
-      document.getElementById('status-time').textContent = 'Not clocked in today';
-      document.getElementById('status-badge').className = 'status-badge badge-out';
+      document.getElementById('status-time').textContent  = 'Not clocked in today';
+      document.getElementById('status-badge').className   = 'status-badge badge-out';
       document.getElementById('status-badge').textContent = '⭕ Not Clocked In';
       document.getElementById('btn-clockin').style.display  = 'flex';
       document.getElementById('btn-clockout').style.display = 'none';
     }
 
-    document.getElementById('status-name').textContent = name;
-    document.getElementById('camera-title').textContent = ACTION==='in' ? 'Clock In — Take Selfie' : 'Clock Out — Take Selfie';
-    document.getElementById('confirm-title').textContent = ACTION==='in' ? 'Confirm Clock In' : 'Confirm Clock Out';
+    document.getElementById('camera-title').textContent  = ACTION==='in'?'Clock In — Take Selfie':'Clock Out — Take Selfie';
+    document.getElementById('confirm-title').textContent = ACTION==='in'?'Confirm Clock In':'Confirm Clock Out';
+    document.getElementById('confirm-name').textContent  = name;
     updateGPSDisplay();
     go('s-status');
+
   }catch(e){
-    showToast('Error loading status','t-red');
+    console.error('selectEmployee:',e);
+    showToast('Error loading status — please try again','t-red');
     go('s-select');
   }
 }
+
 
 // ════════════════════════════════
 // FIX 1: GPS — Non-blocking, 500m radius
@@ -551,7 +591,7 @@ async function saveAttendance(){
       const{error} = await db.from('attendance').insert([{
         employee_id:  SELECTED.id,
         branch_id:    BRANCH_ID,
-        clock_in:     new Date().toISOString(), // Store real UTC
+        clock_in:     getSaudiTime().toISOString(),
         date:         today,
         is_friday:    isFriday,
         photo_in:     PHOTO_B64,
@@ -733,16 +773,26 @@ function go(id){
 // FIX 2: SAUDI TIME HELPERS
 // ════════════════════════════════
 function getSaudiTime(){
-  // Correct Saudi time using Asia/Riyadh timezone
-  // This works on all devices regardless of device timezone setting
+  // Returns current time as Saudi Arabia local time (UTC+3)
+  // Used for storing in database so UI, DB and admin all match
   const now = new Date();
-  const saudiStr = now.toLocaleString('en-US', {timeZone:'Asia/Riyadh'});
-  return new Date(saudiStr);
+  // Get Saudi time string components
+  const opts = {timeZone:'Asia/Riyadh',
+    year:'numeric',month:'2-digit',day:'2-digit',
+    hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false};
+  const parts = new Intl.DateTimeFormat('en-GB',opts).formatToParts(now);
+  const p = {};
+  parts.forEach(x=>{ p[x.type]=x.value; });
+  // Build ISO-like string in Saudi time (no Z suffix = local time)
+  return new Date(`${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}`);
 }
 
 function todayStr(){
-  // Get today date in Saudi Arabia timezone
-  return new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Riyadh'});
+  const s = getSaudiTime();
+  const y = s.getFullYear();
+  const m = String(s.getMonth()+1).padStart(2,'0');
+  const d = String(s.getDate()).padStart(2,'0');
+  return `${y}-${m}-${d}`;
 }
 
 function formatSaudiTime(d){
