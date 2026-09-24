@@ -743,12 +743,16 @@ async function initAdmin(){
 // LOAD BASE DATA
 // ══════════════════════════════════
 async function loadBranchesData(){
-  const{data} = await db.from('branches').select('*').order('name');
+  const{data, error} = await db.from('branches').select('*').order('name');
+  if(error) console.error('Branches error:', error);
   BRANCHES = data || [];
+  console.log('Branches loaded:', BRANCHES.length, BRANCHES.map(b=>b.name));
 }
 async function loadEmployeesData(){
-  const{data} = await db.from('employees').select('*,branches(name)').order('name');
+  const{data, error} = await db.from('employees').select('*').order('name');
+  if(error) console.error('Employees error:', error);
   EMPLOYEES = data || [];
+  console.log('Employees loaded:', EMPLOYEES.length, EMPLOYEES.map(e=>e.name));
 }
 
 function populateFilters(){
@@ -862,7 +866,7 @@ async function loadLive(){
   const absentHtml = absentEmps.length === 0
     ? '<div style="color:var(--green);font-size:.83rem">✅ All active employees are clocked in</div>'
     : absentEmps.map(e=>{
-        const br = BRANCHES.find(b=>b.id===e.branch_id);
+        const br = BRANCHES.find(b=>b.id===e.branch_id) || {name: e.branch_id||'?'};
         return `<div class="absent-row">❌ ${e.name} <span class="badge b-slate">${br?.name||'?'}</span></div>`;
       }).join('');
   document.getElementById('live-absent').innerHTML = absentHtml;
@@ -878,7 +882,7 @@ function renderEmployees(){
     return;
   }
   tbody.innerHTML = EMPLOYEES.map(e=>{
-    const br = BRANCHES.find(b=>b.id===e.branch_id);
+    const br = BRANCHES.find(b=>b.id===e.branch_id) || {name: e.branch_id||'?'};
     const iqamaDisplay = e.iqama_number && e.iqama_number.length>=3
       ? '•••'+e.iqama_number.slice(-3) : '—';
     return `<tr>
