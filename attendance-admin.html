@@ -141,6 +141,34 @@ tr:hover td{background:#f9f7f4}
 .photo-item .photo-info{position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.6);color:#fff;font-size:.6rem;padding:3px 5px}
 .photo-item.selected{border-color:var(--green);border-width:3px}
 
+/* ── BELL NOTIFICATION ── */
+.bell-wrap{position:relative;display:inline-flex;align-items:center;cursor:pointer}
+.bell-icon{font-size:1.3rem;color:rgba(255,255,255,.8);transition:color .2s;user-select:none}
+.bell-icon:hover{color:#fff}
+.bell-badge{position:absolute;top:-4px;right:-6px;background:var(--red);color:#fff;font-size:.55rem;font-weight:800;min-width:16px;height:16px;border-radius:8px;display:none;align-items:center;justify-content:center;padding:0 3px}
+.bell-badge.show{display:flex}
+.notif-panel{position:absolute;top:calc(100% + 10px);right:0;width:310px;background:#fff;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.2);z-index:2000;display:none;max-height:380px;overflow-y:auto}
+.notif-panel.open{display:block}
+.notif-header{padding:11px 14px;font-weight:800;color:var(--green);font-size:.8rem;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+.notif-item{padding:9px 14px;border-bottom:1px solid var(--border);font-size:.76rem;display:flex;gap:8px}
+.notif-item:last-child{border-bottom:none}
+.notif-body{flex:1}
+.notif-title{font-weight:700;color:var(--green);margin-bottom:1px}
+.notif-sub{color:var(--slate)}
+.notif-dismiss{background:none;border:none;cursor:pointer;color:var(--slate);font-size:.7rem;white-space:nowrap}
+.notif-item.al14{border-left:3px solid var(--orange)}
+.notif-item.al17{border-left:3px solid var(--red)}
+.notif-empty{padding:14px;text-align:center;color:var(--slate);font-size:.78rem}
+
+/* ── DAILY COST CHART ── */
+.chart-wrap{background:#fff;border-radius:12px;padding:18px 20px;margin-bottom:16px;box-shadow:0 2px 8px rgba(0,0,0,.04)}
+.chart-title{font-size:.88rem;font-weight:800;color:var(--green);margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.bar-chart{display:flex;align-items:flex-end;gap:3px;height:120px;padding:0 2px}
+.bar-col{display:flex;flex-direction:column;align-items:center;flex:1;gap:2px}
+.bar-col .bv{font-size:.5rem;color:var(--slate);font-weight:700}
+.bar-col .bf{width:100%;background:var(--green);border-radius:3px 3px 0 0;transition:height .3s;min-height:2px}
+.bar-col .bl{font-size:.5rem;color:var(--slate);text-align:center}
+
 /* ── TOAST ── */
 .toast{position:fixed;bottom:22px;right:22px;background:var(--green);color:#fff;padding:11px 20px;border-radius:10px;font-size:.82rem;font-weight:700;transform:translateY(80px);transition:transform .28s;z-index:9999;box-shadow:0 4px 14px rgba(0,0,0,.2)}
 .toast.up{transform:translateY(0)}
@@ -192,6 +220,17 @@ tr:hover td{background:#f9f7f4}
     </div>
     <div class="nav-right">
       <span id="nav-time" style="color:rgba(255,255,255,.7);font-size:.75rem"></span>
+      <div class="bell-wrap" onclick="toggleNotifPanel()">
+        <span class="bell-icon">🔔</span>
+        <span class="bell-badge" id="bell-badge">0</span>
+        <div class="notif-panel" id="notif-panel">
+          <div class="notif-header">
+            <span>Alerts</span>
+            <button onclick="dismissAllNotifs(event)" style="background:none;border:none;cursor:pointer;font-size:.7rem;color:var(--slate)">Dismiss All</button>
+          </div>
+          <div id="notif-list"><div class="notif-empty">No alerts</div></div>
+        </div>
+      </div>
       <button class="btn btn-sm" style="background:rgba(255,255,255,.15);color:#fff" onclick="doLogout()">Logout</button>
     </div>
   </div>
@@ -217,6 +256,19 @@ tr:hover td{background:#f9f7f4}
         <div class="kpi-sub" style="font-size:.68rem;color:var(--slate)">Month to date</div>
         <div class="kpi-lbl">Labour Cost (SAR)</div>
       </div>
+    </div>
+  </div>
+
+  <!-- DAILY COST CHART -->
+  <div style="padding:0 24px">
+    <div class="chart-wrap" id="cost-chart-wrap">
+      <div class="chart-title">
+        Daily Labour Cost — Last 14 Days
+        <select id="chart-branch-filter" onchange="renderCostChart()" style="font-size:.75rem;padding:4px 8px;border-radius:6px;border:1px solid var(--border)">
+          <option value="all">All Branches</option>
+        </select>
+      </div>
+      <div class="bar-chart" id="cost-bar-chart"><div style="color:var(--slate);font-size:.8rem;width:100%;text-align:center">Loading chart...</div></div>
     </div>
   </div>
 
@@ -427,12 +479,12 @@ tr:hover td{background:#f9f7f4}
         <table>
           <thead><tr>
             <th>Employee</th><th>Branch</th><th>Basic</th>
-            <th>Days Present</th><th>OT Hrs</th><th>OT Pay</th>
+            <th>Duty Hrs</th><th>Days Present</th><th>OT Hrs</th><th>OT Pay</th>
             <th>Fri Hrs</th><th>Fri Pay</th><th>Allowance</th>
             <th>Deductions</th><th>Bonus</th><th>Final</th><th>OT%</th>
           </tr></thead>
           <tbody id="sal-tbody">
-            <tr><td colspan="13" style="text-align:center;padding:32px;color:var(--slate)">Select month and calculate</td></tr>
+            <tr><td colspan="14" style="text-align:center;padding:32px;color:var(--slate)">Select month and calculate</td></tr>
           </tbody>
         </table>
       </div>
@@ -493,6 +545,10 @@ tr:hover td{background:#f9f7f4}
       <div class="fg">
         <label>Branch *</label>
         <select id="emp-branch-sel"></select>
+      </div>
+      <div class="fg fg-full">
+        <label>Additional Branches (employee can clock in from multiple branches)</label>
+        <div id="emp-branches-check" style="display:flex;flex-wrap:wrap;gap:8px;padding:8px;background:var(--pearl);border-radius:8px;border:2px solid var(--border)"></div>
       </div>
       <div class="fg">
         <label>Basic Salary (SAR) *</label>
@@ -654,6 +710,9 @@ let BRANCHES    = [];
 let EMPLOYEES   = [];
 let LIVE_TIMER  = null;
 let PHOTO_SEL   = new Set(); // selected photo record ids
+let HISTORY_EMP_ID = null, HISTORY_EMP_NAME = '';
+let CHART_DATA  = [];       // raw daily_summary for cost chart
+let NOTIFICATIONS = [];     // bell notification objects
 
 // ══════════════════════════════════
 // HELPERS
@@ -736,7 +795,9 @@ async function initAdmin(){
     document.getElementById('nav-time').textContent = ts;
   }, 1000);
   // Live refresh
-  LIVE_TIMER = setInterval(()=>{ loadLive(); loadKPIs(); }, 60000);
+  LIVE_TIMER = setInterval(()=>{ loadLive(); loadKPIs(); checkAlerts(); }, 60000);
+  checkAlerts();
+  loadCostChart();
 }
 
 // ══════════════════════════════════
@@ -756,6 +817,12 @@ async function loadEmployeesData(){
 }
 
 function populateFilters(){
+  // Populate chart branch filter
+  const cbf = document.getElementById('chart-branch-filter');
+  if(cbf){
+    const extra = BRANCHES.map(b=>`<option value="${b.id}">${b.name}</option>`).join('');
+    cbf.innerHTML = '<option value="all">All Branches</option>' + extra;
+  }
   const branchOpts = `<option value="all">All Branches</option>` +
     BRANCHES.map(b=>`<option value="${b.id}">${b.name}</option>`).join('');
   ['att-branch','sal-branch'].forEach(id=>{
@@ -792,7 +859,7 @@ async function loadKPIs(){
   // On floor now
   const{data:onFloor} = await db.from('attendance')
     .select('employee_id,clock_in,employees(name)')
-    .is('clock_out',null).gte('date',today);
+    .is('clock_out',null);
   const onFloorCount = onFloor?.length || 0;
   document.getElementById('k-onfloor').textContent = onFloorCount;
   // OT warning
@@ -824,7 +891,7 @@ async function loadLive(){
   const today = todayStrSaudi();
   const{data:clocked} = await db.from('attendance')
     .select('*,employees(name,duty_hours,branch_id)')
-    .is('clock_out',null).gte('date',today);
+    .is('clock_out',null);
 
   const clockedIds = new Set((clocked||[]).map(r=>r.employee_id));
   const now = Date.now();
@@ -915,6 +982,7 @@ function openEmpModal(id){
   document.getElementById('emp-start').value = todayStrSaudi();
   document.getElementById('emp-active').value = 'true';
   document.getElementById('emp-modal-title').textContent = 'Add Employee';
+  populateBranchChecks([]);
   openModal('emp-modal');
 }
 
@@ -932,6 +1000,7 @@ function editEmployee(id){
   document.getElementById('emp-start').value    = e.start_date||'';
   document.getElementById('emp-active').value   = String(e.active);
   document.getElementById('emp-modal-title').textContent = 'Edit Employee';
+  populateBranchChecks(e.allowed_branches||[e.branch_id]);
   openModal('emp-modal');
 }
 
@@ -949,10 +1018,12 @@ async function saveEmployee(){
 
   if(!name||!branch||!salary||!duty){ showToast('Fill all required fields','t-red'); return; }
 
+  const allowedBranches = getAllowedBranches();
   const payload = {
     name, branch_id:branch, basic_salary:salary,
     duty_hours:duty, ot_multiplier:ot, allowance:allow,
-    iqama_number:iqama, start_date:start, active
+    iqama_number:iqama, start_date:start, active,
+    allowed_branches: allowedBranches.length ? allowedBranches : [branch]
   };
 
   let error;
@@ -982,6 +1053,8 @@ async function deleteEmployee(id, name){
 // EMPLOYEE HISTORY
 // ══════════════════════════════════
 async function viewHistory(empId, empName){
+  HISTORY_EMP_ID = empId;
+  HISTORY_EMP_NAME = empName;
   document.getElementById('history-name').textContent = '📊 '+empName+' — Work History';
   document.getElementById('history-content').innerHTML = '<div style="text-align:center;padding:20px;color:var(--slate)">Loading...</div>';
   openModal('history-modal');
@@ -1020,19 +1093,23 @@ async function viewHistory(empId, empName){
     const m = months[mKey];
     const [yr,mo] = mKey.split('-');
     const daysInMo = new Date(parseInt(yr),parseInt(mo),0).getDate();
-    const hrRate = emp ? emp.basic_salary/(emp.duty_hours*daysInMo) : 0;
-    const normalPay = Math.min(m.totalHrs-m.friHrs,emp?.duty_hours*daysInMo||0)*hrRate;
-    const otPay = m.otHrs*hrRate*(emp?.ot_multiplier||1.5);
-    const friPay = m.friHrs*hrRate*1.5;
     const mDeds = (deds||[]).filter(d=>d.belongs_to_month==parseInt(mo)&&d.belongs_to_year==parseInt(yr));
     const totalDed = mDeds.filter(d=>d.type==='deduction').reduce((s,d)=>s+d.amount,0);
     const totalBon = mDeds.filter(d=>d.type==='bonus').reduce((s,d)=>s+d.amount,0);
-    const finalSal = (emp?.basic_salary||0)+otPay+friPay+(emp?.allowance||0)-totalDed+totalBon;
+    // Pay from daily_summary records for this month
+    const hrRate = emp ? emp.basic_salary/(emp.duty_hours*new Date(parseInt(yr),parseInt(mo),0).getDate()) : 0;
+    const normalPay = m.recs.reduce((s,r)=>s+(r.normal_pay||0),0);
+    const otPay = m.recs.reduce((s,r)=>s+(r.ot_pay||0),0);
+    const friPay = m.recs.reduce((s,r)=>s+(r.friday_pay||0),0);
+    const finalSal = normalPay+otPay+friPay+(emp?.allowance||0)-totalDed+totalBon;
 
     html += `<div class="history-month">
       <div class="history-month-header" onclick="toggleMonth('m-${mKey}')">
         <span>${monthName(parseInt(mo))} ${yr} — ${m.recs.length} days · ${m.totalHrs.toFixed(1)} hrs</span>
-        <span>SAR ${finalSal.toFixed(0)} ▼</span>
+        <div style="display:flex;align-items:center;gap:8px" onclick="event.stopPropagation()">
+          <button class="btn btn-sm btn-outline" style="font-size:.68rem;padding:3px 8px" onclick="exportHistoryCSV('${empId}','${empName}','${mKey}',${JSON.stringify(m.recs)})">⬇️ CSV</button>
+          <span>SAR ${finalSal.toFixed(0)} ▼</span>
+        </div>
       </div>
       <div class="history-month-body" id="m-${mKey}">
         <div class="tbl-wrap" style="margin-bottom:10px">
@@ -1228,31 +1305,34 @@ async function loadPhotos(){
 
   PHOTO_RECS = (data||[]).filter(r=>r.photo_in||r.photo_out);
   PHOTO_SEL  = new Set();
-
-  if(!PHOTO_RECS.length){
-    document.getElementById('photo-grid').innerHTML = '<div style="color:var(--slate);font-size:.82rem">No photos found for this date range</div>';
-    return;
-  }
-
-  document.getElementById('photo-grid').innerHTML = PHOTO_RECS.map((r,i)=>`
-    <div class="photo-item ${PHOTO_SEL.has(i)?'selected':''}" onclick="togglePhotoSel(${i},event)">
-      <input type="checkbox" class="photo-check" ${PHOTO_SEL.has(i)?'checked':''} onclick="e=>e.stopPropagation()">
-      <img src="${r.photo_in||r.photo_out}" alt="photo" loading="lazy">
-      <div class="photo-info">${r.employees?.name||'?'}<br>${r.date} ${fmtTime(r.clock_in)}</div>
-    </div>`).join('');
+  renderPhotoGrid();
 }
 
 function togglePhotoSel(i, e){
+  e.stopPropagation();
   e.preventDefault();
   if(PHOTO_SEL.has(i)) PHOTO_SEL.delete(i);
   else PHOTO_SEL.add(i);
-  loadPhotos();
+  renderPhotoGrid();
 }
 
 function selectAllPhotos(){
   if(PHOTO_SEL.size === PHOTO_RECS.length) PHOTO_SEL.clear();
   else PHOTO_RECS.forEach((_,i)=>PHOTO_SEL.add(i));
-  loadPhotos();
+  renderPhotoGrid();
+}
+
+function renderPhotoGrid(){
+  if(!PHOTO_RECS.length){
+    document.getElementById('photo-grid').innerHTML = '<div style="color:var(--slate);font-size:.82rem">No photos found for this date range</div>';
+    return;
+  }
+  document.getElementById('photo-grid').innerHTML = PHOTO_RECS.map((r,i)=>`
+    <div class="photo-item ${PHOTO_SEL.has(i)?'selected':''}" onclick="togglePhotoSel(${i},event)">
+      <input type="checkbox" class="photo-check" ${PHOTO_SEL.has(i)?'checked':''} onchange="togglePhotoSel(${i},event)">
+      <img src="${r.photo_in||r.photo_out}" alt="photo" loading="lazy">
+      <div class="photo-info">${r.employees?.name||'?'}<br>${r.date} ${fmtTime(r.clock_in)}</div>
+    </div>`).join('');
 }
 
 async function deleteSelectedPhotos(){
@@ -1320,7 +1400,8 @@ async function loadSalary(){
     const empDeds   = (deds||[]).filter(d=>d.employee_id===e.id);
     const totalDed  = empDeds.filter(d=>d.type==='deduction').reduce((s,d)=>s+d.amount,0);
     const totalBon  = empDeds.filter(d=>d.type==='bonus').reduce((s,d)=>s+d.amount,0);
-    const finalSal  = e.basic_salary + otPay + friPay + (e.allowance||0) - totalDed + totalBon;
+    const earnedBasic = empSums.reduce((s,r)=>s+(r.normal_pay||0),0);
+    const finalSal  = earnedBasic + otPay + friPay + (e.allowance||0) - totalDed + totalBon;
     const otPct     = e.basic_salary>0 ? (otPay/e.basic_salary*100).toFixed(1) : '0.0';
 
     totBasic+=e.basic_salary; totOT+=otPay; totFri+=friPay;
@@ -1331,7 +1412,8 @@ async function loadSalary(){
     return `<tr>
       <td><strong>${e.name}</strong></td>
       <td><span class="badge b-green">${br?.name||'?'}</span></td>
-      <td>SAR ${e.basic_salary.toLocaleString()}</td>
+      <td>SAR ${earnedBasic.toFixed(0)}</td>
+      <td>${e.duty_hours} hrs</td>
       <td>${daysPresent}</td>
       <td>${otHrs.toFixed(1)}</td>
       <td>SAR ${otPay.toFixed(0)}</td>
@@ -1561,6 +1643,192 @@ function closeModal(id){ document.getElementById(id).classList.remove('open'); }
 document.querySelectorAll('.modal-overlay').forEach(m=>{
   m.addEventListener('click',e=>{ if(e.target===m) m.classList.remove('open'); });
 });
+
+
+// ══════════════════════════════════
+// BELL NOTIFICATIONS
+// ══════════════════════════════════
+function toggleNotifPanel(){
+  const panel = document.getElementById('notif-panel');
+  panel.classList.toggle('open');
+}
+
+function renderNotifs(){
+  const list = document.getElementById('notif-list');
+  const badge = document.getElementById('bell-badge');
+  if(!NOTIFICATIONS.length){
+    list.innerHTML = '<div class="notif-empty">No alerts</div>';
+    badge.classList.remove('show');
+    return;
+  }
+  list.innerHTML = NOTIFICATIONS.map((n,i)=>`
+    <div class="notif-item ${n.cls||''}">
+      <div class="notif-body">
+        <div class="notif-title">${n.title}</div>
+        <div class="notif-sub">${n.sub}</div>
+      </div>
+      <button class="notif-dismiss" onclick="dismissNotif(${i})">✕</button>
+    </div>`).join('');
+  badge.textContent = NOTIFICATIONS.length;
+  badge.classList.toggle('show', NOTIFICATIONS.length > 0);
+}
+
+function dismissNotif(i){
+  NOTIFICATIONS.splice(i,1);
+  renderNotifs();
+  event.stopPropagation();
+}
+
+function dismissAllNotifs(e){
+  e.stopPropagation();
+  NOTIFICATIONS = [];
+  renderNotifs();
+}
+
+async function checkAlerts(){
+  const{data:onFloor} = await db.from('attendance')
+    .select('employee_id,clock_in,employees(name,duty_hours)')
+    .is('clock_out',null);
+
+  const now = Date.now();
+  const newNotifs = [];
+
+  (onFloor||[]).forEach(r=>{
+    const hrs = (now - new Date(r.clock_in).getTime()) / 3600000;
+    const name = r.employees?.name || 'Employee';
+    const dutyHrs = r.employees?.duty_hours || 8;
+
+    if(hrs >= 17){
+      // Auto clock-out warning (admin side alert only)
+      const exists = NOTIFICATIONS.find(n=>n.id==='ao-'+r.employee_id);
+      if(!exists) newNotifs.push({
+        id: 'ao-'+r.employee_id,
+        cls: 'al17',
+        title: '⛔ 17h Limit: '+name,
+        sub: `${hrs.toFixed(1)} hrs — Auto clock-out triggered on tablet`
+      });
+    } else if(hrs >= 14){
+      const exists = NOTIFICATIONS.find(n=>n.id==='al14-'+r.employee_id);
+      if(!exists) newNotifs.push({
+        id: 'al14-'+r.employee_id,
+        cls: 'al14',
+        title: '⚠️ Long Shift: '+name,
+        sub: `${hrs.toFixed(1)} hrs clocked in — over ${dutyHrs}h duty`
+      });
+    }
+  });
+
+  // Merge: keep existing unless resolved (no longer on floor)
+  const onFloorIds = new Set((onFloor||[]).map(r=>r.employee_id));
+  NOTIFICATIONS = NOTIFICATIONS.filter(n=>{
+    const empId = n.id?.split('-').slice(1).join('-');
+    return onFloorIds.has(empId);
+  });
+  newNotifs.forEach(n=>{
+    if(!NOTIFICATIONS.find(x=>x.id===n.id)) NOTIFICATIONS.push(n);
+  });
+  renderNotifs();
+}
+
+// ══════════════════════════════════
+// DAILY COST CHART
+// ══════════════════════════════════
+async function loadCostChart(){
+  const today = todayStrSaudi();
+  const d14 = new Date(today);
+  d14.setDate(d14.getDate()-13);
+  const from = d14.toISOString().slice(0,10);
+
+  const{data} = await db.from('daily_summary')
+    .select('date,total_pay,employee_id,employees(branch_id)')
+    .gte('date',from).lte('date',today);
+
+  CHART_DATA = data||[];
+  renderCostChart();
+}
+
+function renderCostChart(){
+  const filter = document.getElementById('chart-branch-filter')?.value||'all';
+  const today = todayStrSaudi();
+
+  // Build last 14 days array
+  const days = [];
+  for(let i=13;i>=0;i--){
+    const d = new Date(today);
+    d.setDate(d.getDate()-i);
+    days.push(d.toISOString().slice(0,10));
+  }
+
+  const totals = days.map(day=>{
+    const recs = CHART_DATA.filter(r=>{
+      if(r.date!==day) return false;
+      if(filter==='all') return true;
+      return r.employees?.branch_id===filter;
+    });
+    return recs.reduce((s,r)=>s+(r.total_pay||0),0);
+  });
+
+  const maxVal = Math.max(...totals,1);
+  const container = document.getElementById('cost-bar-chart');
+  if(!container) return;
+
+  container.innerHTML = `<div style="display:flex;align-items:flex-end;gap:4px;height:140px;padding:0 4px">
+    ${days.map((day,i)=>{
+      const pct = (totals[i]/maxVal*100).toFixed(1);
+      const label = day.slice(5); // MM-DD
+      const val = totals[i];
+      const isToday = day===today;
+      return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;min-width:0">
+        <div style="font-size:.56rem;color:var(--slate);white-space:nowrap">${val>0?'SAR'+Math.round(val):''}</div>
+        <div style="width:100%;background:${isToday?'var(--green)':'var(--green2)'};opacity:${val>0?1:0.15};border-radius:3px 3px 0 0;height:${pct}%;min-height:2px;transition:height .3s" title="${label}: SAR${val.toFixed(0)}"></div>
+        <div style="font-size:.55rem;color:var(--slate);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%">${label}</div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+// ══════════════════════════════════
+// HISTORY CSV EXPORT
+// ══════════════════════════════════
+function exportHistoryCSV(empId, empName, monthKey, recs){
+  const [yr,mo] = monthKey.split('-');
+  const headers = ['Date','Clock In','Clock Out','Hours','Type'];
+  const rows = recs.map(r=>{
+    const type = !r.photo_in && r.clock_in ? 'Continuation'
+               : r.is_friday ? 'Friday' : 'Normal';
+    return [
+      r.date,
+      fmtTime(r.clock_in),
+      r.clock_out ? fmtTime(r.clock_out) : 'Open',
+      (r.hours_worked||0).toFixed(2),
+      type
+    ];
+  });
+  const csv = [headers,...rows].map(row=>row.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = 'data:text/csv;charset=utf-8,﻿'+encodeURIComponent(csv);
+  a.download = `${empName}_${monthKey}.csv`;
+  a.click();
+  showToast('CSV exported ✅','t-gold');
+}
+
+// ══════════════════════════════════
+// MULTI-BRANCH: populate checkboxes in employee modal
+// ══════════════════════════════════
+function populateBranchChecks(allowedBranches){
+  const container = document.getElementById('emp-branches-check');
+  if(!container) return;
+  container.innerHTML = BRANCHES.map(b=>`
+    <label style="display:flex;align-items:center;gap:4px;font-size:.78rem;font-weight:600;cursor:pointer;padding:4px 8px;background:var(--white);border-radius:6px;border:1px solid var(--border)">
+      <input type="checkbox" data-bid="${b.id}" ${(allowedBranches||[]).includes(b.id)?'checked':''} style="width:auto;padding:0;border:none;background:none">
+      ${b.name}
+    </label>`).join('');
+}
+
+function getAllowedBranches(){
+  const checks = document.querySelectorAll('#emp-branches-check input[data-bid]');
+  return [...checks].filter(c=>c.checked).map(c=>c.dataset.bid);
+}
 
 // ══════════════════════════════════
 // TOAST
