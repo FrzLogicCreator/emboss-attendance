@@ -42,6 +42,16 @@ html,body{min-height:100vh;font-family:'Segoe UI',system-ui,sans-serif;backgroun
 .emp-btn:hover{background:var(--green);color:var(--white);border-color:var(--green)}
 .emp-btn:active{transform:scale(.96)}
 
+/* GREEN DOT — clocked in indicator */
+.emp-btn{position:relative}
+.clk-dot{position:absolute;top:6px;right:6px;width:9px;height:9px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 2px #fff;display:none}
+.emp-btn.clocked-in .clk-dot{display:block}
+
+/* GUIDANCE NOTES */
+.guide-notes{display:flex;flex-direction:column;gap:8px;padding:12px 0 4px}
+.guide-note{display:flex;align-items:flex-start;gap:8px;font-size:.74rem;font-weight:600;color:var(--green);background:var(--green-lt);border-radius:8px;padding:7px 10px;border-left:3px solid var(--green)}
+.guide-note .gi{font-size:1rem;flex-shrink:0}
+
 /* STATUS CARD */
 .status-card{background:var(--green);border-radius:16px;padding:24px 20px;text-align:center;position:relative;overflow:hidden}
 .status-card::before{content:'';position:absolute;right:-20px;bottom:-20px;width:100px;height:100px;border-radius:50%;background:rgba(237,168,203,.1)}
@@ -123,7 +133,14 @@ html,body{min-height:100vh;font-family:'Segoe UI',system-ui,sans-serif;backgroun
       <div class="sec-label">Select Your Name</div>
       <input class="search-inp" id="search-inp" placeholder="Search employee..." oninput="filterEmployees()">
     </div>
-    <div class="emp-grid" id="emp-grid">
+    <!-- GUIDANCE NOTES -->
+     <div class="guide-notes">
+       <div class="guide-note"><span class="gi">📸</span><span>Take a clear selfie with your face visible when clocking in and out.</span></div>
+       <div class="guide-note"><span class="gi">📍</span><span>Make sure your location (GPS) is enabled for accurate attendance.</span></div>
+       <div class="guide-note"><span class="gi">🟢</span><span>Green dot on your name = you are currently clocked in.</span></div>
+       <div class="guide-note"><span class="gi">⚠️</span><span>If you forget to clock out, your shift will auto-close after 17 hours.</span></div>
+     </div>
+     <div class="emp-grid" id="emp-grid">
       <div style="grid-column:1/-1;text-align:center;padding:32px;color:var(--slate)">
         <div class="dots"><div class="d"></div><div class="d"></div><div class="d"></div></div>
         <div class="loading-txt">Loading employees...</div>
@@ -268,6 +285,8 @@ let SAVE_BUSY  = false;
   document.getElementById('branch-label-2').textContent = label;
   await loadBranch();
   await loadEmployees();
+  // Refresh green dot indicators every 60 seconds
+  setInterval(refreshClockedIn, 60000);
   getGPS();
 })();
 
@@ -293,16 +312,33 @@ async function loadBranch(){
 // ════════════════════════════════
 async function loadEmployees(){
   try{
-    let q = db.from('employees').select('id,name').eq('active',true).order('name',{ascending:true});
-    if(BRANCH_ID) q = q.eq('branch_id', BRANCH_ID);
+    let q = db.from('employees').select('id,name,branch_id,allowed_branches').eq('active',true).order('name',{ascending:true});
+    // Show employee if their primary branch OR allowed_branches includes this branch
+    // Filter done client-side after fetch to support allowed_branches array
     const{data,error} = await q;
     if(error) throw error;
-    EMPLOYEES = data || [];
+    // Filter to show employees assigned to this branch (primary or allowed_branches)
+    const all = data || [];
+    EMPLOYEES = BRANCH_ID
+      ? all.filter(e=>e.branch_id===BRANCH_ID || (e.allowed_branches||[]).includes(BRANCH_ID))
+      : all;
+    await refreshClockedIn();
     renderEmployees(EMPLOYEES);
   }catch(e){
     document.getElementById('emp-grid').innerHTML =
       '<div style="grid-column:1/-1;text-align:center;padding:32px;color:var(--red)">⚠️ Connection error — check internet</div>';
   }
+}
+
+let CLOCKED_IN_IDS = new Set();
+
+async function refreshClockedIn(){
+  try{
+    const{data} = await db.from('attendance')
+      .select('employee_id').is('clock_out',null);
+    CLOCKED_IN_IDS = new Set((data||[]).map(r=>r.employee_id));
+    renderEmployees(EMPLOYEES);
+  }catch(e){ /* silent */ }
 }
 
 function renderEmployees(list){
@@ -311,11 +347,13 @@ function renderEmployees(list){
     grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:32px;color:var(--slate)">👥 No employees found<br><small>Add employees from admin dashboard</small></div>';
     return;
   }
-  grid.innerHTML = list.map(e=>
-    `<button class="emp-btn" onclick="selectEmployee('${e.id}','${e.name.replace(/'/g,"\'")}')">
+  grid.innerHTML = list.map(e=>{
+    const isIn = CLOCKED_IN_IDS.has(e.id);
+    return `<button class="emp-btn ${isIn?'clocked-in':''}" onclick="selectEmployee('${e.id}','${e.name.replace(/'/g,"\'")}')">
+      <span class="clk-dot"></span>
       ${e.name}
-    </button>`
-  ).join('');
+    </button>`;
+  }).join('');
 }
 
 function filterEmployees(){
@@ -356,19 +394,21 @@ async function selectEmployee(id, name){
 
     let openRec = data && data.length > 0 ? data[0] : null;
 
-    // AUTO CLOSE after 15 hours
+    // AUTO CLOSE after 17 hours
     if(openRec){
       const clockInTime = new Date(openRec.clock_in);
       const hoursOpen   = (nowSaudi - clockInTime) / 3600000;
-      if(hoursOpen > 15){
-        const autoClose = new Date(clockInTime.getTime() + 15*3600000);
+      if(hoursOpen > 17){
+        const autoClose = new Date(clockInTime.getTime() + 17*3600000);
         await db.from('attendance').update({
           clock_out:    autoClose.toISOString(),
-          hours_worked: 15
+          hours_worked: 17
         }).eq('id', openRec.id);
         updateDailySummary(id, openRec.date, openRec.is_friday).catch(()=>{});
         openRec = null;
-        showToast('Previous shift auto-closed after 15 hours','t-gold');
+        showToast('Shift auto-closed after 17 hours','t-gold');
+      } else if(hoursOpen > 14){
+        showToast(`⚠️ ${name} has been clocked in for ${hoursOpen.toFixed(1)} hours`,'t-gold');
       }
     }
 
@@ -762,6 +802,12 @@ function resetApp(){
   ACTION     = null;
   PHOTO_B64  = null;
   document.getElementById('search-inp').value = '';
+  // Race condition lock: disable employee buttons for 3 seconds
+  document.querySelectorAll('.emp-btn').forEach(b=>{ b.disabled=true; b.style.opacity='0.5'; });
+  setTimeout(()=>{
+    document.querySelectorAll('.emp-btn').forEach(b=>{ b.disabled=false; b.style.opacity=''; });
+    refreshClockedIn(); // refresh green dots after clock action
+  }, 3000);
   renderEmployees(EMPLOYEES);
   go('s-select');
   getGPS(); // Refresh GPS
