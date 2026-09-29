@@ -1221,15 +1221,17 @@ async function viewHistory(empId, empName){
               ${mRecs.map(r=>{
                 const rt = r.record_type || 'normal';
                 const noPhoto = !r.photo_in && !r.photo_out;
-                const typeLabel = rt==='split'
-                  ? `<span class="badge b-slate">🌙 Midnight Split${noPhoto?' · no photo':''}</span>`
-                  : rt==='auto'
-                    ? '<span class="badge b-red">⚙️ Auto Close</span>'
-                    : r.is_friday
-                      ? `<span class="badge b-gold">⭐ Friday${noPhoto?' · photo removed':''}</span>`
-                      : noPhoto
-                        ? '<span class="badge b-slate">✏️ Normal · photo removed</span>'
-                        : '<span class="badge b-green">✅ Normal</span>';
+                const typeLabel = rt==='auto_split'
+                  ? `<span class="badge b-red">🌙⚙️ Split+AutoClose${noPhoto?' · no photo':''}</span>`
+                  : rt==='split'
+                    ? `<span class="badge b-slate">🌙 Midnight Split${noPhoto?' · no photo':''}</span>`
+                    : rt==='auto'
+                      ? '<span class="badge b-red">⚙️ Auto Close</span>'
+                      : r.is_friday
+                        ? `<span class="badge b-gold">⭐ Friday${noPhoto?' · photo removed':''}</span>`
+                        : noPhoto
+                          ? '<span class="badge b-slate">✏️ Normal · photo removed</span>'
+                          : '<span class="badge b-green">✅ Normal</span>';
                 return `<tr>
                   <td>${r.date}</td>
                   <td>${fmtTime(r.clock_in)}</td>
@@ -1305,15 +1307,17 @@ async function loadAttendance(){
     const br   = BRANCHES.find(b=>b.id===r.employees?.branch_id);
     const rt = r.record_type || 'normal';
     const noPhoto = !r.photo_in && !r.photo_out;
-    const typeLabel = rt==='split'
-      ? `<span class="badge b-slate">🌙 Midnight Split${noPhoto?' · no photo':''}</span>`
-      : rt==='auto'
-        ? `<span class="badge b-red">⚙️ Auto Close${noPhoto?'':''}</span>`
-        : r.is_friday
-          ? `<span class="badge b-gold">⭐ Friday${noPhoto?' · photo removed':''}</span>`
-          : noPhoto
-            ? '<span class="badge b-slate">✏️ Normal · photo removed</span>'
-            : '<span class="badge b-green">✅ Normal</span>';
+    const typeLabel = rt==='auto_split'
+      ? `<span class="badge b-red">🌙⚙️ Split+AutoClose${noPhoto?' · no photo':''}</span>`
+      : rt==='split'
+        ? `<span class="badge b-slate">🌙 Midnight Split${noPhoto?' · no photo':''}</span>`
+        : rt==='auto'
+          ? '<span class="badge b-red">⚙️ Auto Close</span>'
+          : r.is_friday
+            ? `<span class="badge b-gold">⭐ Friday${noPhoto?' · photo removed':''}</span>`
+            : noPhoto
+              ? '<span class="badge b-slate">✏️ Normal · photo removed</span>'
+              : '<span class="badge b-green">✅ Normal</span>';
     const photoIn  = r.photo_in  ? `<button class="btn btn-sm" style="background:var(--green-lt);color:var(--green)" onclick="viewPhoto('${r.id}','in')">📷 In</button>` : '<span style="color:var(--slate);font-size:.75rem">—</span>';
     const photoOut = r.photo_out ? `<button class="btn btn-sm" style="background:var(--green-lt);color:var(--green)" onclick="viewPhoto('${r.id}','out')">📷 Out</button>` : '<span style="color:var(--slate);font-size:.75rem">—</span>';
 
@@ -1957,13 +1961,20 @@ function exportHistoryCSV(empId, empName, mKey){
   rows.push(['ATTENDANCE LOG']);
   rows.push(['Date','Clock In','Clock Out','Hours Worked','Day Type','Note']);
   mRecs.forEach(r=>{
-    const isCont = !r.photo_in && r.clock_in;
+    const rt = r.record_type || 'normal';
+    const noPhoto = !r.photo_in && !r.photo_out;
+    const dayType = rt==='auto_split' ? 'Midnight Split + Auto Close'
+      : rt==='split'  ? 'Midnight Split'
+      : rt==='auto'   ? 'Auto Close'
+      : r.is_friday   ? 'Friday'
+      : noPhoto       ? 'Normal (photo removed)'
+      : 'Normal';
     rows.push([
       r.date,
       fmtTime(r.clock_in),
       r.clock_out ? fmtTime(r.clock_out) : 'OPEN',
       fmtHrs(r.hours_worked||0),
-      isCont ? 'Auto-continuation' : r.is_friday ? 'Friday' : 'Normal',
+      dayType,
       ''
     ]);
   });
