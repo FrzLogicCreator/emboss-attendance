@@ -121,6 +121,24 @@ html,body{min-height:100vh;font-family:'Segoe UI',system-ui,sans-serif;backgroun
 .d:nth-child(3){background:var(--pink);animation-delay:.3s}
 @keyframes dUp{from{transform:translateY(0);opacity:.4}to{transform:translateY(-11px);opacity:1}}
 .loading-txt{color:var(--slate);font-size:.83rem;font-weight:600;text-align:center}
+
+/* PIN MODAL */
+.pin-overlay{position:fixed;inset:0;background:rgba(16,66,55,.55);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(3px)}
+.pin-box{background:var(--white);border-radius:20px;padding:32px 28px;width:100%;max-width:340px;box-shadow:0 8px 40px rgba(16,66,55,.25);text-align:center}
+.pin-emp-name{font-size:1.1rem;font-weight:800;color:var(--green);margin-bottom:6px}
+.pin-subtitle{font-size:.78rem;color:var(--slate);font-weight:600;margin-bottom:22px}
+.pin-dots{display:flex;justify-content:center;gap:12px;margin-bottom:22px}
+.pin-dot{width:14px;height:14px;border-radius:50%;border:2.5px solid var(--border);background:transparent;transition:all .15s}
+.pin-dot.filled{background:var(--green);border-color:var(--green)}
+.pin-keypad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px}
+.pin-key{background:var(--pearl);border:2px solid var(--border);border-radius:12px;padding:16px 10px;font-size:1.2rem;font-weight:700;color:var(--green);cursor:pointer;transition:all .15s;font-family:inherit}
+.pin-key:active{transform:scale(.94);background:var(--green);color:var(--white)}
+.pin-key.del{background:transparent;border-color:transparent;color:var(--slate);font-size:.9rem}
+.pin-key.del:active{background:#fdecea;color:var(--red)}
+.pin-error{color:var(--red);font-size:.78rem;font-weight:700;min-height:18px;margin-bottom:8px}
+.pin-cancel{font-size:.8rem;color:var(--slate);font-weight:600;cursor:pointer;background:none;border:none;font-family:inherit;padding:6px}
+.pin-cancel:hover{color:var(--green)}
+@keyframes pinShake{0%,100%{transform:translateX(0)}20%{transform:translateX(-8px)}40%{transform:translateX(8px)}60%{transform:translateX(-5px)}80%{transform:translateX(5px)}}
 </style>
 </head>
 <body>
@@ -316,7 +334,7 @@ async function loadBranch(){
 // ════════════════════════════════
 async function loadEmployees(){
   try{
-    let q = db.from('employees').select('id,name,branch_id,allowed_branches').eq('active',true).order('name',{ascending:true});
+    let q = db.from('employees').select('id,name,branch_id,allowed_branches,pin').eq('active',true).order('name',{ascending:true});
     // Show employee if their primary branch OR allowed_branches includes this branch
     // Filter done client-side after fetch to support allowed_branches array
     const{data,error} = await q;
@@ -368,7 +386,71 @@ function filterEmployees(){
 // ════════════════════════════════
 // SELECT EMPLOYEE
 // ════════════════════════════════
-async function selectEmployee(id, name){
+// ════════════════════════════════
+// PIN LOGIC
+// ════════════════════════════════
+let _pinBuffer = '';
+let _pinPending = null; // {id, name, pin}
+
+function selectEmployee(id, name){
+  // Find employee pin from loaded list
+  const emp = EMPLOYEES.find(e=>e.id===id);
+  const pin = emp ? (emp.pin||'') : '';
+  if(!pin){
+    // No PIN set — go straight through
+    _doSelectEmployee(id, name);
+    return;
+  }
+  // Show PIN modal
+  _pinPending = {id, name, pin};
+  _pinBuffer = '';
+  document.getElementById('pin-emp-name').textContent = name;
+  document.getElementById('pin-error').textContent = '';
+  _updatePinDots();
+  document.getElementById('pin-overlay').style.display = 'flex';
+}
+
+function pinKey(k){
+  if(k==='del'){
+    _pinBuffer = _pinBuffer.slice(0,-1);
+    document.getElementById('pin-error').textContent='';
+  } else {
+    if(_pinBuffer.length>=4) return;
+    _pinBuffer += k;
+  }
+  _updatePinDots();
+  if(_pinBuffer.length===4) _checkPin();
+}
+
+function _updatePinDots(){
+  for(let i=0;i<4;i++){
+    document.getElementById('pd'+i).classList.toggle('filled', i<_pinBuffer.length);
+  }
+}
+
+function _checkPin(){
+  if(_pinBuffer === _pinPending.pin){
+    document.getElementById('pin-overlay').style.display='none';
+    _doSelectEmployee(_pinPending.id, _pinPending.name);
+  } else {
+    document.getElementById('pin-error').textContent='Incorrect PIN. Try again.';
+    // shake animation
+    const box = document.querySelector('.pin-box');
+    box.style.animation='none';
+    box.offsetHeight; // reflow
+    box.style.animation='pinShake .35s ease';
+    _pinBuffer='';
+    _updatePinDots();
+  }
+}
+
+function pinCancel(){
+  document.getElementById('pin-overlay').style.display='none';
+  _pinBuffer='';
+  _pinPending=null;
+}
+
+async function _doSelectEmployee(id, name){
   SELECTED = {id, name};
   go('s-loading');
   document.getElementById('loading-txt').textContent = 'Loading status...';
@@ -874,6 +956,36 @@ function showToast(msg, cls=''){
   tTmr = setTimeout(()=>t.classList.remove('up'), 3400);
 }
 </script>
+<!-- PIN MODAL -->
+<div class="pin-overlay" id="pin-overlay" style="display:none">
+  <div class="pin-box">
+    <div class="pin-emp-name" id="pin-emp-name"></div>
+    <div class="pin-subtitle">Enter your 4-digit PIN</div>
+    <div class="pin-dots">
+      <div class="pin-dot" id="pd0"></div>
+      <div class="pin-dot" id="pd1"></div>
+      <div class="pin-dot" id="pd2"></div>
+      <div class="pin-dot" id="pd3"></div>
+    </div>
+    <div class="pin-error" id="pin-error"></div>
+    <div class="pin-keypad">
+      <button class="pin-key" onclick="pinKey('1')">1</button>
+      <button class="pin-key" onclick="pinKey('2')">2</button>
+      <button class="pin-key" onclick="pinKey('3')">3</button>
+      <button class="pin-key" onclick="pinKey('4')">4</button>
+      <button class="pin-key" onclick="pinKey('5')">5</button>
+      <button class="pin-key" onclick="pinKey('6')">6</button>
+      <button class="pin-key" onclick="pinKey('7')">7</button>
+      <button class="pin-key" onclick="pinKey('8')">8</button>
+      <button class="pin-key" onclick="pinKey('9')">9</button>
+      <button class="pin-key del" onclick="pinKey('del')">⌫</button>
+      <button class="pin-key" onclick="pinKey('0')">0</button>
+      <div></div>
+    </div>
+    <button class="pin-cancel" onclick="pinCancel()">Cancel</button>
+  </div>
+</div>
+
 <script>
 // Register Service Worker for PWA install support
 if('serviceWorker' in navigator){
