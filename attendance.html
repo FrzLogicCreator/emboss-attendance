@@ -300,11 +300,9 @@ let SAVE_BUSY  = false;
 (async function boot(){
   const p = new URLSearchParams(window.location.search).get('branch') || 'olaya';
   BRANCH = p.toLowerCase();
-  const labels = {olaya:'Olaya Branch', masif:'Masif Branch', muruj:'Muruj Branch'};
-  const label  = labels[BRANCH] || BRANCH;
-  // Set branch label IMMEDIATELY from URL
-  document.getElementById('branch-label').textContent   = label;
-  document.getElementById('branch-label-2').textContent = label;
+  // Branch display label is fetched from DB in loadBranch() — show URL key as placeholder until then
+  document.getElementById('branch-label').textContent   = BRANCH;
+  document.getElementById('branch-label-2').textContent = BRANCH;
   await loadBranch();
   await loadEmployees();
   // Refresh green dot indicators every 60 seconds
@@ -320,6 +318,10 @@ async function loadBranch(){
     const{data}=await db.from('branches').select('*').eq('name',BRANCH).maybeSingle();
     if(data){
       BRANCH_ID  = data.id;
+      // Use display label from DB (set by admin); fall back to URL key if label not set yet
+      const displayLabel = data.label || data.name;
+      document.getElementById('branch-label').textContent   = displayLabel;
+      document.getElementById('branch-label-2').textContent = displayLabel;
       BRANCH_GPS = {
         lat:    parseFloat(data.latitude)  || 0,
         lng:    parseFloat(data.longitude) || 0,
