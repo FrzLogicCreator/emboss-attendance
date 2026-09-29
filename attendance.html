@@ -325,8 +325,14 @@ async function loadBranch(){
         lng:    parseFloat(data.longitude) || 0,
         radius: data.radius_meters || 500
       };
+      console.info('[EMBOSS][loadBranch] Branch loaded:', BRANCH, '| ID:', BRANCH_ID, '| GPS radius:', BRANCH_GPS.radius+'m');
+    } else {
+      // DEBUG FLAG: branch name in URL did not match any branch in DB
+      console.error('[EMBOSS][loadBranch] No branch found for name:', BRANCH, '— check URL parameter ?branch=');
     }
-  }catch(e){console.error('Branch load:',e);}
+  }catch(e){
+    console.error('[EMBOSS][loadBranch] Failed to load branch config:', e);
+  }
 }
 
 // ════════════════════════════════
@@ -339,14 +345,22 @@ async function loadEmployees(){
     // Filter done client-side after fetch to support allowed_branches array
     const{data,error} = await q;
     if(error) throw error;
+    // FIXED: if BRANCH_ID is null (branch failed to load), block employee list entirely
+    // Previously: all employees from all branches would show — wrong people on wrong screen
+    if(!BRANCH_ID){
+      console.error('[EMBOSS][loadEmployees] BRANCH_ID is null — branch config failed to load. Blocking employee list.');
+      document.getElementById('emp-grid').innerHTML =
+        '<div style="grid-column:1/-1;text-align:center;padding:32px;color:var(--red)">⚠️ Branch not found — please check your URL or contact admin</div>';
+      return;
+    }
     // Filter to show employees assigned to this branch (primary or allowed_branches)
     const all = data || [];
-    EMPLOYEES = BRANCH_ID
-      ? all.filter(e=>e.branch_id===BRANCH_ID || (e.allowed_branches||[]).includes(BRANCH_ID))
-      : all;
+    EMPLOYEES = all.filter(e=>e.branch_id===BRANCH_ID || (e.allowed_branches||[]).includes(BRANCH_ID));
     await refreshClockedIn();
     renderEmployees(EMPLOYEES);
   }catch(e){
+    // DEBUG FLAG: employee load failed
+    console.error('[EMBOSS][loadEmployees] Failed to load employees:', e);
     document.getElementById('emp-grid').innerHTML =
       '<div style="grid-column:1/-1;text-align:center;padding:32px;color:var(--red)">⚠️ Connection error — check internet</div>';
   }
@@ -356,11 +370,20 @@ let CLOCKED_IN_IDS = new Set();
 
 async function refreshClockedIn(){
   try{
+    // FIXED: filter to today + yesterday only — orphaned old records (no clock_out) must not show green dot forever
+    const todayDate = todayStr();
+    const saudiYest = new Date(getSaudiTime().getTime() - 24*60*60*1000);
+    const yesterdayDate = saudiYest.toISOString().split('T')[0];
     const{data} = await db.from('attendance')
-      .select('employee_id').is('clock_out',null);
+      .select('employee_id')
+      .is('clock_out',null)
+      .in('date',[todayDate, yesterdayDate]); // only recent records — not weeks-old orphans
     CLOCKED_IN_IDS = new Set((data||[]).map(r=>r.employee_id));
     renderEmployees(EMPLOYEES);
-  }catch(e){ /* silent */ }
+  }catch(e){
+    // DEBUG FLAG: green dot refresh failed — log for diagnosis
+    console.warn('[EMBOSS][refreshClockedIn] Failed to refresh clocked-in status:', e);
+  }
 }
 
 function renderEmployees(list){
@@ -694,6 +717,9 @@ async function saveAttendance(){
   if(SAVE_BUSY) return;
   SAVE_BUSY = true;
 
+  // DEBUG FLAG: log every save attempt for audit trail
+  console.info('[EMBOSS][saveAttendance] Action:', ACTION, '| Employee:', SELECTED?.name, '| Branch:', BRANCH_ID, '| Friday:', getSaudiTime().getUTCDay()===5);
+
   const btn = document.getElementById('btn-confirm');
   btn.classList.add('busy');
   btn.disabled = true;
@@ -709,7 +735,8 @@ async function saveAttendance(){
   try{
     const nowSaudi = new Date(); // UTC — standard for storage and calculation
     const today    = todayStr(); // Saudi date
-    const isFriday = nowSaudi.getDay() === 5;
+    // FIXED: use getSaudiTime() for day-of-week check — device timezone may differ from Saudi (UTC+3)
+    const isFriday = getSaudiTime().getUTCDay() === 5;
 
     if(ACTION === 'in'){
       const{error} = await db.from('attendance').insert([{
@@ -728,9 +755,9 @@ async function saveAttendance(){
       showDone('✅', SELECTED.name, 'Clocked In at ' + formatSaudiTime(nowSaudi), 'Clock In Recorded');
 
     } else {
-      const yesterday = new Date(nowSaudi);
-      yesterday.setDate(yesterday.getDate()-1);
-      const yStr = yesterday.toLocaleDateString('en-CA');
+      // FIXED: use getSaudiTime() for yesterday — toLocaleDateString uses device timezone which may not be Saudi
+      const saudiYest = new Date(getSaudiTime().getTime() - 24*60*60*1000);
+      const yStr = saudiYest.toISOString().split('T')[0];
 
       const{data:openRecs,error:fetchErr} = await db.from('attendance')
         .select('*')
@@ -929,9 +956,12 @@ function todayStr(){
 function formatSaudiTime(d){
   // Add 3 hours to UTC time for Saudi display
   // Works whether d is a Date object or ISO string
+  // Uses getUTCHours/getUTCMinutes — reliable across all browsers (not toUTCString which is format-dependent)
   const date = (d instanceof Date) ? d : new Date(d);
   const saudi = new Date(date.getTime() + 3*60*60*1000);
-  return saudi.toUTCString().slice(17,22); // HH:MM
+  const hh = String(saudi.getUTCHours()).padStart(2,'0');
+  const mm = String(saudi.getUTCMinutes()).padStart(2,'0');
+  return hh + ':' + mm; // HH:MM — always correct
 }
 
 function fmtHrs(h){
