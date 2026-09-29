@@ -135,10 +135,10 @@ html,body{min-height:100vh;font-family:'Segoe UI',system-ui,sans-serif;backgroun
     </div>
     <!-- GUIDANCE NOTES -->
      <div class="guide-notes">
-       <div class="guide-note"><span class="gi">📸</span><span>Take a clear selfie with your face visible when clocking in and out.</span></div>
+       <div class="guide-note"><span class="gi">📸</span><span>Take a clear selfie — ensure your face is fully visible when clocking in and out.</span></div>
        <div class="guide-note"><span class="gi">📍</span><span>Make sure your location (GPS) is enabled for accurate attendance.</span></div>
        <div class="guide-note"><span class="gi">🟢</span><span>Green dot on your name = you are currently clocked in.</span></div>
-       <div class="guide-note"><span class="gi">⚠️</span><span>If you forget to clock out, your shift will auto-close after 17 hours.</span></div>
+       <div class="guide-note"><span class="gi">🚪</span><span>Always clock out before leaving the premises.</span></div>
      </div>
      <div class="emp-grid" id="emp-grid">
       <div style="grid-column:1/-1;text-align:center;padding:32px;color:var(--slate)">
@@ -408,7 +408,7 @@ async function selectEmployee(id, name){
         openRec = null;
         showToast('Shift auto-closed after 17 hours','t-gold');
       } else if(hoursOpen > 14){
-        showToast(`⚠️ ${name} has been clocked in for ${hoursOpen.toFixed(1)} hours`,'t-gold');
+        showToast(`⚠️ ${name} has been clocked in for ${fmtHrs(hoursOpen)} — approaching limit`,'t-gold');
       }
     }
 
@@ -704,7 +704,7 @@ async function saveAttendance(){
 
         clearTimeout(safety);
         showDone('🕐', SELECTED.name,
-          formatSaudiTime(clockInTime)+' → '+formatSaudiTime(nowSaudi)+' · '+(hoursDay1+hoursDay2).toFixed(2)+' hrs',
+          formatSaudiTime(clockInTime)+' → '+formatSaudiTime(nowSaudi)+' · '+fmtHrs(hoursDay1+hoursDay2),
           'Clock Out Recorded');
 
       } else {
@@ -720,7 +720,7 @@ async function saveAttendance(){
         updateDailySummary(SELECTED.id, openRec.date, openRec.is_friday).catch(()=>{});
         clearTimeout(safety);
         showDone('🕐', SELECTED.name,
-          formatSaudiTime(clockInTime)+' → '+formatSaudiTime(nowSaudi)+' · '+hoursWorked.toFixed(2)+' hrs',
+          formatSaudiTime(clockInTime)+' → '+formatSaudiTime(nowSaudi)+' · '+fmtHrs(hoursWorked),
           'Clock Out Recorded');
       }
     }
@@ -846,6 +846,15 @@ function formatSaudiTime(d){
   const date = (d instanceof Date) ? d : new Date(d);
   const saudi = new Date(date.getTime() + 3*60*60*1000);
   return saudi.toUTCString().slice(17,22); // HH:MM
+}
+
+function fmtHrs(h){
+  if(h==null||isNaN(h)) return '0h 0m';
+  const sign = h < 0 ? '-' : '';
+  h = Math.abs(h);
+  const hh = Math.floor(h);
+  const mm = Math.round((h - hh) * 60);
+  return `${sign}${hh}h ${mm}m`;
 }
 
 // ════════════════════════════════
