@@ -511,11 +511,56 @@ async function _doSelectEmployee(id, name){
       const hoursOpen   = (nowSaudi - clockInTime) / 3600000;
       if(hoursOpen > 17){
         const autoClose = new Date(clockInTime.getTime() + 17*3600000);
-        await db.from('attendance').update({
-          clock_out:    autoClose.toISOString(),
-          hours_worked: 17
-        }).eq('id', openRec.id);
-        updateDailySummary(id, openRec.date, openRec.is_friday).catch(()=>{});
+
+        // Check if auto-close time crosses Saudi midnight
+        const clockInSaudi  = new Date(clockInTime.getTime() + 3*60*60*1000);
+        const midnightUTC   = new Date(Date.UTC(
+          clockInSaudi.getUTCFullYear(), clockInSaudi.getUTCMonth(), clockInSaudi.getUTCDate() + 1, 0,0,0
+        ) - 3*60*60*1000); // Saudi midnight in UTC
+
+        if(autoClose > midnightUTC){
+          // AUTO-CLOSE crosses midnight — split into two records
+          const hoursDay1 = (midnightUTC - clockInTime) / 3600000;
+          const hoursDay2 = (autoClose   - midnightUTC) / 3600000;
+
+          // Close Day 1 record at midnight
+          await db.from('attendance').update({
+            clock_out:    midnightUTC.toISOString(),
+            hours_worked: parseFloat(hoursDay1.toFixed(2)),
+            record_type:  'auto'
+          }).eq('id', openRec.id);
+
+          // Create Day 2 split+auto record
+          const midnightSaudi = new Date(midnightUTC.getTime() + 3*60*60*1000);
+          const day2Str       = midnightSaudi.toISOString().split('T')[0];
+          const isFriday2     = midnightSaudi.getUTCDay() === 5; // correct Friday check for Day 2
+          await db.from('attendance').insert([{
+            employee_id:  id,
+            branch_id:    openRec.branch_id,
+            clock_in:     midnightUTC.toISOString(),
+            clock_out:    autoClose.toISOString(),
+            date:         day2Str,
+            is_friday:    isFriday2,
+            hours_worked: parseFloat(hoursDay2.toFixed(2)),
+            gps_verified: false,
+            record_type:  'auto_split' // midnight split that was also auto-closed
+          }]);
+
+          // Update daily summary for BOTH days
+          updateDailySummary(id, openRec.date, openRec.is_friday).catch(()=>{});
+          updateDailySummary(id, day2Str, isFriday2).catch(()=>{});
+          console.info('[EMBOSS][autoClose] Midnight split auto-close | Day1:', openRec.date, hoursDay1.toFixed(2)+'h | Day2:', day2Str, hoursDay2.toFixed(2)+'h | Day2 Friday:', isFriday2);
+        } else {
+          // Simple auto-close, no midnight crossing
+          await db.from('attendance').update({
+            clock_out:    autoClose.toISOString(),
+            hours_worked: 17,
+            record_type:  'auto'
+          }).eq('id', openRec.id);
+          updateDailySummary(id, openRec.date, openRec.is_friday).catch(()=>{});
+          console.info('[EMBOSS][autoClose] Simple auto-close | Employee:', name, '| Date:', openRec.date);
+        }
+
         openRec = null;
         showToast('Shift auto-closed after 17 hours','t-gold');
       } else if(hoursOpen > 14){
@@ -750,7 +795,8 @@ async function saveAttendance(){
         photo_in:     PHOTO_B64,
         lat_in:       USER_GPS.lat,
         lng_in:       USER_GPS.lng,
-        gps_verified: GPS_OK
+        gps_verified: GPS_OK,
+        record_type:  'normal'
       }]);
       if(error) throw error;
       clearTimeout(safety);
@@ -811,7 +857,8 @@ async function saveAttendance(){
           photo_out:    PHOTO_B64,
           lat_out:      USER_GPS.lat,
           lng_out:      USER_GPS.lng,
-          gps_verified: GPS_OK
+          gps_verified: GPS_OK,
+          record_type:  'split'
         }]);
 
         updateDailySummary(SELECTED.id, openRec.date, openRec.is_friday).catch(()=>{});
@@ -859,20 +906,27 @@ async function updateDailySummary(empId, date, isFri){
       .select('basic_salary,duty_hours,ot_multiplier').eq('id',empId).single();
     if(!emp) return;
 
+    // NULL GUARD: if salary or duty_hours missing, store hours only, skip pay calculation
+    const basicSalary = emp.basic_salary || 0;
+    const dutyHours   = emp.duty_hours   || 8; // fallback to 8h to avoid divide-by-zero
+    if(!emp.basic_salary || !emp.duty_hours){
+      console.warn('[EMBOSS][updateDailySummary] Employee missing salary/duty_hours:', empId, '— storing hours only, pay=0');
+    }
+
     const{data:records} = await db.from('attendance')
       .select('hours_worked').eq('employee_id',empId).eq('date',date);
     const totalHours = (records||[]).reduce((s,r)=>s+(r.hours_worked||0),0);
 
     const d = new Date(date);
     const daysInMonth = new Date(d.getFullYear(),d.getMonth()+1,0).getDate();
-    const hourlyRate  = emp.basic_salary / (emp.duty_hours * daysInMonth);
+    const hourlyRate  = basicSalary / (dutyHours * daysInMonth);
 
     let normalPay=0, otPay=0, fridayPay=0;
     if(isFri){
       fridayPay = totalHours * hourlyRate * 1.5;
     } else {
-      const normalHrs = Math.min(totalHours, emp.duty_hours);
-      const otHrs     = Math.max(0, totalHours - emp.duty_hours);
+      const normalHrs = Math.min(totalHours, dutyHours);
+      const otHrs     = Math.max(0, totalHours - dutyHours);
       normalPay = normalHrs * hourlyRate;
       otPay     = otHrs    * hourlyRate * (emp.ot_multiplier || 1.5);
     }
@@ -882,8 +936,8 @@ async function updateDailySummary(empId, date, isFri){
       date:         date,
       total_hours:  parseFloat(totalHours.toFixed(2)),
       duty_hours:   emp.duty_hours,
-      normal_hours: parseFloat(Math.min(totalHours,emp.duty_hours).toFixed(2)),
-      ot_hours:     parseFloat(Math.max(0,totalHours-emp.duty_hours).toFixed(2)),
+      normal_hours: parseFloat(Math.min(totalHours,dutyHours).toFixed(2)),
+      ot_hours:     parseFloat(Math.max(0,totalHours-dutyHours).toFixed(2)),
       is_friday:    isFri,
       hourly_rate:  parseFloat(hourlyRate.toFixed(4)),
       normal_pay:   parseFloat(normalPay.toFixed(2)),
