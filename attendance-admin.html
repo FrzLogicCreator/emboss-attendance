@@ -1133,7 +1133,7 @@ async function viewHistory(empId, empName){
 
   // Get attendance records (for dates, clock times, photo flags only)
   const{data:recs} = await db.from('attendance')
-    .select('id,date,clock_in,clock_out,hours_worked,is_friday,photo_in')
+    .select('id,date,clock_in,clock_out,hours_worked,is_friday,photo_in,photo_out,record_type')
     .eq('employee_id',empId)
     .order('date',{ascending:false});
 
@@ -1219,12 +1219,17 @@ async function viewHistory(empId, empName){
             <thead><tr><th>Date</th><th>Clock In</th><th>Clock Out</th><th>Hours</th><th>Type</th></tr></thead>
             <tbody>
               ${mRecs.map(r=>{
-                const isCont = !r.photo_in && r.clock_in;
-                const typeLabel = isCont
-                  ? '<span class="badge b-slate">⚙️ Auto</span>'
-                  : r.is_friday
-                    ? '<span class="badge b-gold">Friday</span>'
-                    : '<span class="badge b-green">Normal</span>';
+                const rt = r.record_type || 'normal';
+                const noPhoto = !r.photo_in && !r.photo_out;
+                const typeLabel = rt==='split'
+                  ? `<span class="badge b-slate">🌙 Midnight Split${noPhoto?' · no photo':''}</span>`
+                  : rt==='auto'
+                    ? '<span class="badge b-red">⚙️ Auto Close</span>'
+                    : r.is_friday
+                      ? `<span class="badge b-gold">⭐ Friday${noPhoto?' · photo removed':''}</span>`
+                      : noPhoto
+                        ? '<span class="badge b-slate">✏️ Normal · photo removed</span>'
+                        : '<span class="badge b-green">✅ Normal</span>';
                 return `<tr>
                   <td>${r.date}</td>
                   <td>${fmtTime(r.clock_in)}</td>
@@ -1298,12 +1303,17 @@ async function loadAttendance(){
 
   tbody.innerHTML = filtered.map(r=>{
     const br   = BRANCHES.find(b=>b.id===r.employees?.branch_id);
-    const isCont = !r.photo_in && r.clock_in;
-    const typeLabel = isCont
-      ? '<span class="badge b-slate">⚙️ Auto</span>'
-      : r.is_friday
-        ? '<span class="badge b-gold">Friday</span>'
-        : '<span class="badge b-green">Normal</span>';
+    const rt = r.record_type || 'normal';
+    const noPhoto = !r.photo_in && !r.photo_out;
+    const typeLabel = rt==='split'
+      ? `<span class="badge b-slate">🌙 Midnight Split${noPhoto?' · no photo':''}</span>`
+      : rt==='auto'
+        ? `<span class="badge b-red">⚙️ Auto Close${noPhoto?'':''}</span>`
+        : r.is_friday
+          ? `<span class="badge b-gold">⭐ Friday${noPhoto?' · photo removed':''}</span>`
+          : noPhoto
+            ? '<span class="badge b-slate">✏️ Normal · photo removed</span>'
+            : '<span class="badge b-green">✅ Normal</span>';
     const photoIn  = r.photo_in  ? `<button class="btn btn-sm" style="background:var(--green-lt);color:var(--green)" onclick="viewPhoto('${r.id}','in')">📷 In</button>` : '<span style="color:var(--slate);font-size:.75rem">—</span>';
     const photoOut = r.photo_out ? `<button class="btn btn-sm" style="background:var(--green-lt);color:var(--green)" onclick="viewPhoto('${r.id}','out')">📷 Out</button>` : '<span style="color:var(--slate);font-size:.75rem">—</span>';
 
