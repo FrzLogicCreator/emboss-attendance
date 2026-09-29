@@ -531,7 +531,7 @@ tr:hover td{background:#f9f7f4}
       <div class="tbl-wrap">
         <table>
           <thead><tr>
-            <th>Branch Name</th><th>Type</th><th>GPS</th><th>Radius</th><th>Actions</th>
+            <th>Display Name</th><th>Key (URL)</th><th>Type</th><th>GPS</th><th>Radius</th><th>Actions</th>
           </tr></thead>
           <tbody id="branch-tbody">
             <tr><td colspan="5" style="text-align:center;padding:32px;color:var(--slate)">Loading...</td></tr>
@@ -619,8 +619,12 @@ tr:hover td{background:#f9f7f4}
     <input type="hidden" id="branch-id">
     <div class="form-grid">
       <div class="fg fg-full">
-        <label>Branch Name *</label>
-        <input type="text" id="branch-name" placeholder="e.g. Olaya, Masif, Delivery Driver">
+        <label>Branch Key * <small style="font-weight:400;color:var(--slate)">(URL key — lowercase, no spaces, e.g. olaya)</small></label>
+        <input type="text" id="branch-name" placeholder="e.g. olaya, masif, muruj">
+      </div>
+      <div class="fg fg-full">
+        <label>Display Name * <small style="font-weight:400;color:var(--slate)">(shown to employees in the app)</small></label>
+        <input type="text" id="branch-label-inp" placeholder="e.g. Olaya Branch, Al Masif Café">
       </div>
       <div class="fg fg-full">
         <label>Branch Type *</label>
@@ -1629,14 +1633,15 @@ async function deleteDeduction(id){
 function renderBranches(){
   const tbody = document.getElementById('branch-tbody');
   if(!BRANCHES.length){
-    tbody.innerHTML='<tr><td colspan="5" style="text-align:center;padding:32px;color:var(--slate)">No branches yet</td></tr>';
+    tbody.innerHTML='<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--slate)">No branches yet</td></tr>';
     return;
   }
   tbody.innerHTML = BRANCHES.map(b=>{
     const hasGPS = b.latitude && b.longitude && parseFloat(b.latitude)!==0;
     const type   = b.radius_meters===0||!hasGPS ? 'Mobile/No GPS' : 'Fixed Location';
     return `<tr>
-      <td><strong>${b.name}</strong></td>
+      <td><strong>${b.label||b.name}</strong></td>
+      <td style="font-size:.8rem;color:var(--slate)">${b.name}</td>
       <td><span class="badge ${hasGPS?'b-green':'b-slate'}">${type}</span></td>
       <td>${hasGPS?`${parseFloat(b.latitude).toFixed(4)}, ${parseFloat(b.longitude).toFixed(4)}`:'Not set'}</td>
       <td>${hasGPS?(b.radius_meters||500)+'m':'—'}</td>
@@ -1651,12 +1656,13 @@ function renderBranches(){
 }
 
 function openBranchModal(){
-  document.getElementById('branch-id').value     = '';
-  document.getElementById('branch-name').value   = '';
-  document.getElementById('branch-type').value   = 'fixed';
-  document.getElementById('branch-lat').value    = '';
-  document.getElementById('branch-lng').value    = '';
-  document.getElementById('branch-radius').value = '500';
+  document.getElementById('branch-id').value        = '';
+  document.getElementById('branch-name').value      = '';
+  document.getElementById('branch-label-inp').value = '';
+  document.getElementById('branch-type').value      = 'fixed';
+  document.getElementById('branch-lat').value       = '';
+  document.getElementById('branch-lng').value       = '';
+  document.getElementById('branch-radius').value    = '500';
   document.getElementById('branch-modal-title').textContent = 'Add Branch';
   toggleGPS();
   openModal('branch-modal');
@@ -1666,12 +1672,13 @@ function editBranch(id){
   const b = BRANCHES.find(x=>x.id===id);
   if(!b) return;
   const hasGPS = b.latitude && parseFloat(b.latitude)!==0;
-  document.getElementById('branch-id').value     = b.id;
-  document.getElementById('branch-name').value   = b.name;
-  document.getElementById('branch-type').value   = hasGPS?'fixed':'mobile';
-  document.getElementById('branch-lat').value    = b.latitude||'';
-  document.getElementById('branch-lng').value    = b.longitude||'';
-  document.getElementById('branch-radius').value = b.radius_meters||500;
+  document.getElementById('branch-id').value        = b.id;
+  document.getElementById('branch-name').value      = b.name;
+  document.getElementById('branch-label-inp').value = b.label || b.name; // fallback to name if label not set
+  document.getElementById('branch-type').value      = hasGPS?'fixed':'mobile';
+  document.getElementById('branch-lat').value       = b.latitude||'';
+  document.getElementById('branch-lng').value       = b.longitude||'';
+  document.getElementById('branch-radius').value    = b.radius_meters||500;
   document.getElementById('branch-modal-title').textContent = 'Edit Branch';
   toggleGPS();
   openModal('branch-modal');
@@ -1693,15 +1700,17 @@ function useMyLocation(){
 
 async function saveBranch(){
   const id     = document.getElementById('branch-id').value;
-  const name   = document.getElementById('branch-name').value.trim();
+  const name   = document.getElementById('branch-name').value.trim().toLowerCase().replace(/\s+/g,'_');
+  const label  = document.getElementById('branch-label-inp').value.trim();
   const type   = document.getElementById('branch-type').value;
   const lat    = type==='fixed' ? parseFloat(document.getElementById('branch-lat').value)||0 : 0;
   const lng    = type==='fixed' ? parseFloat(document.getElementById('branch-lng').value)||0 : 0;
   const radius = type==='fixed' ? parseInt(document.getElementById('branch-radius').value)||500 : 0;
 
-  if(!name){ showToast('Enter branch name','t-red'); return; }
+  if(!name){ showToast('Enter branch key','t-red'); return; }
+  if(!label){ showToast('Enter display name','t-red'); return; }
 
-  const payload = {name, latitude:lat, longitude:lng, radius_meters:radius, active:true};
+  const payload = {name, label, latitude:lat, longitude:lng, radius_meters:radius, active:true};
   let error;
   if(id){
     ({error} = await db.from('branches').update(payload).eq('id',id));
