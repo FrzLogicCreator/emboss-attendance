@@ -1073,11 +1073,12 @@ function showToast(msg, cls=''){
 </div>
 
 <script>
-// Register Service Worker for PWA install support
+// Register branch-aware Service Worker
 if('serviceWorker' in navigator){
   window.addEventListener('load', ()=>{
-    navigator.serviceWorker.register('./sw.js')
-      .catch(()=>{}); // silent fail — app works fine without it
+    const branch = new URLSearchParams(location.search).get('branch') || 'default';
+    navigator.serviceWorker.register('./sw.js?branch=' + branch)
+      .catch(()=>{});
   });
 }
 </script>
