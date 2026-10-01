@@ -940,16 +940,16 @@ async function loadLive(){
       await db.from('attendance').update({
         clock_out: autoOut.toISOString(),
         hours_worked: 15,
-        admin_note: 'Auto clock-out at 15h limit'
+        record_type: 'auto'
       }).eq('id', r.id);
       const emp = EMPLOYEES.find(e=>e.id===r.employee_id);
       if(emp) await recalcDailySummary(r.employee_id, r.date, r.is_friday, emp);
-      addNotification(`🚨 Auto clock-out: ${r.employees?.name} exceeded 15 hours`, 'red');
+      showToast(`🚨 Auto clock-out: ${r.employees?.name} exceeded 15 hours`, 't-red');
     } else if(hrs >= 14){
       // 14h warning
       const warnKey = `warn14_${r.id}`;
       if(!sessionStorage.getItem(warnKey)){
-        addNotification(`⚠️ ${r.employees?.name} has been on floor for ${fmtHrs(hrs)} — approaching 15h limit`, 'orange');
+        showToast(`⚠️ ${r.employees?.name} approaching 15h limit`, 't-gold');
         sessionStorage.setItem(warnKey, '1');
       }
     }
