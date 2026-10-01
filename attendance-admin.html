@@ -914,7 +914,7 @@ async function loadKPIs(){
 // ══════════════════════════════════
 async function loadLive(){
   const{data:clocked} = await db.from('attendance')
-    .select('*,employees(name,duty_hours,branch_id)')
+    .select('id,employee_id,branch_id,clock_in,clock_out,date,is_friday,hours_worked,record_type,employees(name,duty_hours,branch_id)')
     .is('clock_out',null);
 
   const nowMs = Date.now();
@@ -957,7 +957,7 @@ async function loadLive(){
 
   // Re-fetch after potential auto clock-outs
   const{data:clocked2} = await db.from('attendance')
-    .select('*,employees(name,duty_hours,branch_id)')
+    .select('id,employee_id,branch_id,clock_in,clock_out,date,is_friday,hours_worked,record_type,employees(name,duty_hours,branch_id)')
     .is('clock_out',null);
   const empMap2 = {};
   (clocked2||[]).forEach(r=>{
@@ -966,9 +966,17 @@ async function loadLive(){
   });
   const live = Object.values(empMap2);
 
+  // Fetch today's attendance to know who clocked in at all today (even if already clocked out)
+  const todayStr = todayStrSaudi();
+  const{data:todayRecs} = await db.from('attendance')
+    .select('employee_id,branch_id')
+    .eq('date', todayStr);
+  const clockedInTodayIds = new Set((todayRecs||[]).map(r=>r.employee_id));
+
   const branchHtml = BRANCHES.map(b=>{
     const branchEmps = EMPLOYEES.filter(e=>e.active && e.branch_id===b.id);
-    const onFloor = live.filter(r=>r.employees?.branch_id===b.id);
+    // Use attendance.branch_id (where they actually clocked in) not employees.branch_id
+    const onFloor = live.filter(r=>r.branch_id===b.id);
 
     const rows = onFloor.map(r=>{
       const emp = EMPLOYEES.find(e=>e.id===r.employee_id);
@@ -990,20 +998,21 @@ async function loadLive(){
     }).join('');
 
     return `<div class="live-branch-card">
-      <div class="live-branch-name">📍 ${b.name}</div>
+      <div class="live-branch-name">📍 ${b.label||b.name}</div>
       <div class="live-branch-stats">${onFloor.length} on floor of ${branchEmps.length} employees</div>
-      ${rows || '<div class="absent-row">No one clocked in</div>'}
+      ${rows || '<div class="absent-row">No one clocked in right now</div>'}
     </div>`;
   }).join('');
 
   document.getElementById('live-branches').innerHTML = branchHtml || '<div style="color:var(--slate)">No branches found</div>';
 
-  const absentEmps = EMPLOYEES.filter(e=>e.active && !new Set(live.map(r=>r.employee_id)).has(e.id));
+  // Not Clocked In Today = employees who have NO attendance record at all today
+  const absentEmps = EMPLOYEES.filter(e=>e.active && !clockedInTodayIds.has(e.id));
   const absentHtml = absentEmps.length === 0
-    ? '<div style="color:var(--green);font-size:.83rem">✅ All active employees are clocked in</div>'
+    ? '<div style="color:var(--green);font-size:.83rem">✅ All active employees have clocked in today</div>'
     : absentEmps.map(e=>{
         const br = BRANCHES.find(b=>b.id===e.branch_id) || {name: e.branch_id||'?'};
-        return `<div class="absent-row">❌ ${e.name} <span class="badge b-slate">${br?.name||'?'}</span></div>`;
+        return `<div class="absent-row">❌ ${e.name} <span class="badge b-slate">${br?.label||br?.name||'?'}</span></div>`;
       }).join('');
   document.getElementById('live-absent').innerHTML = absentHtml;
 }
