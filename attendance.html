@@ -503,7 +503,7 @@ async function _doSelectEmployee(id, name){
   document.getElementById('loading-txt').textContent = 'Loading status...';
   try{
     const today    = todayStr();
-    const nowSaudi = new Date(); // UTC — standard for storage and calculation
+    const nowSaudi = await getServerTime(); // SERVER UTC — bypasses phone timezone bug
 
     // Yesterday in Saudi date
     const saudiNow = getSaudiTime();
@@ -802,7 +802,7 @@ async function saveAttendance(){
   }, 15000);
 
   try{
-    const nowSaudi = new Date(); // UTC — standard for storage and calculation
+    const nowSaudi = await getServerTime(); // SERVER UTC — bypasses phone timezone bug
     const today    = todayStr(); // Saudi date
     // FIXED: use getSaudiTime() for day-of-week check — device timezone may differ from Saudi (UTC+3)
     const isFriday = getSaudiTime().getUTCDay() === 5;
@@ -1020,6 +1020,18 @@ function getSaudiTime(){
   // Returns current time shifted to Saudi Arabia (UTC+3)
   // Used ONLY for date checking and display — NOT for storage
   return new Date(Date.now() + 3*60*60*1000);
+}
+
+async function getServerTime(){
+  // Fetch accurate UTC time from Supabase server — bypasses phone clock entirely
+  // This fixes the issue where phones set to wrong timezone record wrong clock-in times
+  try {
+    const { data } = await db.rpc('get_server_time');
+    if(data) return new Date(data);
+  } catch(e){
+    console.warn('[EMBOSS] Server time fetch failed, falling back to device clock:', e);
+  }
+  return new Date(); // fallback: use phone clock if server unreachable
 }
 
 
