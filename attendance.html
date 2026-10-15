@@ -1175,7 +1175,7 @@ async function loadMgrPanel(){
       html += `<div class="mgr-emp-row" onclick="loadMgrEmpDetail('${eid}','${nm.replace(/'/g,"\\'")}')">
         <div>
           <div class="mgr-emp-name">${nm}</div>
-          <div class="mgr-emp-status">${recs.length} record${recs.length>1?'s':''} · ${fmtHours(totalH)}</div>
+          <div class="mgr-emp-status">${recs.length} record${recs.length>1?'s':''} · ${fmtHrs(totalH)}</div>
         </div>
         <div style="font-size:1.2rem;color:var(--slate)">›</div>
       </div>`;
@@ -1220,7 +1220,7 @@ async function loadMgrEmpDetail(empId, empName){
     list.innerHTML = recs.map(r=>{
       const cin  = formatSaudiTime(r.clock_in);
       const cout = r.clock_out ? formatSaudiTime(r.clock_out) : '—';
-      const h    = r.hours_worked != null ? fmtHours(r.hours_worked) : 'open';
+      const h    = r.hours_worked != null ? fmtHrs(r.hours_worked) : 'open';
       const tag  = r.record_type ? `<span style="font-size:.7rem;background:var(--green-lt);color:var(--green);padding:2px 7px;border-radius:20px;font-weight:700">${r.record_type}</span>` : '';
       return `<div class="mgr-rec-card">
         <div style="display:flex;justify-content:space-between;align-items:flex-start">
@@ -1292,9 +1292,9 @@ async function saveMgrRecord(){
   const coutVal   = document.getElementById('mgr-edit-cout').value;
   const reason    = document.getElementById('mgr-edit-reason').value.trim() || 'Manager adjustment';
 
-  if(!empId){  showToast('Select an employee', 'error'); return; }
-  if(!dateVal){ showToast('Select a date', 'error'); return; }
-  if(!cinVal){  showToast('Clock-in time required', 'error'); return; }
+  if(!empId){  showToast('Select an employee', 't-red'); return; }
+  if(!dateVal){ showToast('Select a date', 't-red'); return; }
+  if(!cinVal){  showToast('Clock-in time required', 't-red'); return; }
 
   // Build UTC timestamps from Saudi time input
   function saudiInputToUTC(dateStr, timeStr){
@@ -1306,15 +1306,21 @@ async function saveMgrRecord(){
   }
 
   const cinUTC  = saudiInputToUTC(dateVal, cinVal);
-  const coutUTC = coutVal ? saudiInputToUTC(dateVal, coutVal) : null;
+  let   coutUTC = coutVal ? saudiInputToUTC(dateVal, coutVal) : null;
 
-  // Handle clock-out before clock-in (crossed midnight) — add 1 day to clock-out date
-  if(coutUTC && coutUTC <= cinUTC){
-    coutUTC.setUTCDate(coutUTC.getUTCDate() + 1);
+  // Handle clock-out before clock-in — means the shift crossed Saudi midnight
+  // e.g. clock-in 22:00, clock-out 02:00 → clock-out is actually next Saudi day
+  // We only do this when clock-out is earlier than clock-in (overnight)
+  if(coutUTC && coutUTC < cinUTC){
+    // Add 1 day to clock-out
+    const nextDay = new Date(coutUTC.getTime() + 24*60*60*1000);
+    coutUTC = nextDay;
   }
 
   const hoursWorked = coutUTC ? parseFloat(((coutUTC - cinUTC) / 3600000).toFixed(2)) : null;
-  const isFriday = cinUTC.getUTCDay() === 5; // Friday check based on UTC clock-in (Saudi date handles this correctly for most cases)
+  // Friday check: use the Saudi date string (dateVal), not UTC day-of-week
+  // Saudi 00:00-02:59 = previous UTC day, so getUTCDay() on cinUTC would be wrong for early morning
+  const isFriday = new Date(dateVal + 'T12:00:00Z').getUTCDay() === 5; // noon UTC on that date — safe day-of-week check
 
   try{
     if(MGR_EDIT_REC_ID){
@@ -1344,7 +1350,7 @@ async function saveMgrRecord(){
 
       // Recalculate daily summary
       updateDailySummary(empId, dateVal, isFriday).catch(()=>{});
-      showToast('Record updated ✓', 'ok');
+      showToast('Record updated ✓', 't-gold');
     } else {
       // ADD new record
       const{error} = await db.from('attendance').insert([{
@@ -1360,7 +1366,7 @@ async function saveMgrRecord(){
       }]);
       if(error) throw error;
       updateDailySummary(empId, dateVal, isFriday).catch(()=>{});
-      showToast('Record added ✓', 'ok');
+      showToast('Record added ✓', 't-gold');
     }
     closeMgrEdit();
     // Refresh current view
@@ -1372,7 +1378,7 @@ async function saveMgrRecord(){
     }
   }catch(e){
     console.error('[MGR] saveMgrRecord error:', e);
-    showToast('Save failed — check connection', 'error');
+    showToast('Save failed — check connection', 't-red');
   }
 }
 
