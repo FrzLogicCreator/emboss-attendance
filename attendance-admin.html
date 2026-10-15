@@ -282,6 +282,7 @@ tr:hover td{background:#f9f7f4}
     <button class="tab-btn" onclick="switchTab('attendance')">📋 Attendance</button>
     <button class="tab-btn" onclick="switchTab('salary')">💰 Salary</button>
     <button class="tab-btn" onclick="switchTab('branches')">📍 Branches</button>
+    <button class="tab-btn" onclick="switchTab('mgrlog')">🔍 Manager Log</button>
   </div>
 
   <!-- TAB: LIVE VIEW -->
@@ -515,6 +516,30 @@ tr:hover td{background:#f9f7f4}
           </tr></thead>
           <tbody id="ded-tbody">
             <tr><td colspan="8" style="text-align:center;padding:24px;color:var(--slate)">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB: MANAGER LOG -->
+  <div class="tab-panel" id="tab-mgrlog">
+    <div class="card">
+      <div class="card-title" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+        Manager Adjustment Log
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <input type="date" id="mgrlog-from" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:.83rem">
+          <input type="date" id="mgrlog-to"   style="padding:6px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:.83rem">
+          <button class="btn btn-sm btn-outline" onclick="loadMgrLog()">Load</button>
+        </div>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr>
+            <th>Date/Time</th><th>Manager</th><th>Employee</th><th>Change</th><th>Old Value</th><th>New Value</th><th>Reason</th>
+          </tr></thead>
+          <tbody id="mgrlog-tbody">
+            <tr><td colspan="7" style="text-align:center;padding:32px;color:var(--slate)">Select a date range and click Load</td></tr>
           </tbody>
         </table>
       </div>
@@ -1762,13 +1787,72 @@ async function deleteBranch(id, name){
 // ══════════════════════════════════
 function switchTab(name){
   document.querySelectorAll('.tab-btn').forEach((b,i)=>{
-    b.classList.toggle('on',['live','employees','attendance','salary','branches'][i]===name);
+    b.classList.toggle('on',['live','employees','attendance','salary','branches','mgrlog'][i]===name);
   });
   document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('on'));
   document.getElementById('tab-'+name).classList.add('on');
   if(name==='employees') renderEmployees();
   if(name==='branches')  renderBranches();
   if(name==='salary')    loadDeductions();
+  if(name==='mgrlog'){
+    // Default date range: last 7 days
+    const today = new Date().toISOString().split('T')[0];
+    const week  = new Date(Date.now()-7*24*60*60*1000).toISOString().split('T')[0];
+    if(!document.getElementById('mgrlog-from').value) document.getElementById('mgrlog-from').value = week;
+    if(!document.getElementById('mgrlog-to').value)   document.getElementById('mgrlog-to').value   = today;
+    loadMgrLog();
+  }
+}
+
+async function loadMgrLog(){
+  const from = document.getElementById('mgrlog-from').value;
+  const to   = document.getElementById('mgrlog-to').value;
+  const tbody = document.getElementById('mgrlog-tbody');
+  tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--slate)">Loading...</td></tr>';
+  try{
+    let q = db.from('attendance_adjustments')
+      .select('id,created_at,adjusted_by,attendance_id,field_changed,old_value,new_value,reason')
+      .order('created_at',{ascending:false})
+      .limit(200);
+    if(from) q = q.gte('created_at', from+'T00:00:00Z');
+    if(to)   q = q.lte('created_at', to+'T23:59:59Z');
+    const{data,error} = await q;
+    if(error){
+      if(error.code==='42P01'){ // table doesn't exist yet
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--slate)">No manager logs yet — run the SQL setup in Supabase first</td></tr>';
+        return;
+      }
+      throw error;
+    }
+    if(!data||!data.length){
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--slate)">No adjustments in this period</td></tr>';
+      return;
+    }
+    // Build employee/manager name lookup
+    const empMap = {};
+    (EMPLOYEES||[]).forEach(e=>{ empMap[e.id]=e.name; });
+
+    tbody.innerHTML = data.map(row=>{
+      const dt   = row.created_at ? new Date(row.created_at).toLocaleString('en-SA',{hour12:false}) : '—';
+      const mgr  = empMap[row.adjusted_by] || row.adjusted_by?.slice(0,8)+'…' || '—';
+      // Attendance ID → employee name requires join; show truncated ID with link hint
+      const empCell = row.attendance_id ? `<span title="${row.attendance_id}" style="font-size:.75rem;color:var(--slate)">${row.attendance_id.slice(0,8)}…</span>` : '—';
+      const oldV = row.old_value ? new Date(row.old_value).toLocaleString('en-SA',{hour12:false}) : '—';
+      const newV = row.new_value ? new Date(row.new_value).toLocaleString('en-SA',{hour12:false}) : '—';
+      return `<tr>
+        <td style="font-size:.8rem;white-space:nowrap">${dt}</td>
+        <td style="font-weight:600">${mgr}</td>
+        <td>${empCell}</td>
+        <td style="font-size:.8rem">${row.field_changed||'—'}</td>
+        <td style="font-size:.8rem;color:var(--red)">${oldV}</td>
+        <td style="font-size:.8rem;color:var(--green)">${newV}</td>
+        <td style="font-size:.8rem">${row.reason||'—'}</td>
+      </tr>`;
+    }).join('');
+  }catch(e){
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--red)">Error: ${e.message}</td></tr>`;
+    console.error('[ADMIN] loadMgrLog error:', e);
+  }
 }
 
 // ══════════════════════════════════

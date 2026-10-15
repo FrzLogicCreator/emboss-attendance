@@ -144,6 +144,48 @@ html,body{min-height:100vh;font-family:'Segoe UI',system-ui,sans-serif;backgroun
 @keyframes dUp{from{transform:translateY(0);opacity:.4}to{transform:translateY(-11px);opacity:1}}
 .loading-txt{color:var(--slate);font-size:.83rem;font-weight:600;text-align:center}
 
+/* MANAGER CHOICE SCREEN */
+.mgr-choice-wrap{display:flex;flex-direction:column;gap:16px;padding:8px 0}
+.mgr-choice-btn{display:flex;align-items:center;gap:16px;background:var(--white);border:2px solid var(--border);border-radius:16px;padding:20px 22px;cursor:pointer;transition:all .18s;font-family:inherit;width:100%;text-align:left}
+.mgr-choice-btn:hover{border-color:var(--green);background:var(--green-lt)}
+.mgr-choice-btn:active{transform:scale(.97)}
+.mgr-choice-icon{font-size:2rem;flex-shrink:0}
+.mgr-choice-label{font-size:1rem;font-weight:800;color:var(--green);display:block}
+.mgr-choice-sub{font-size:.75rem;color:var(--slate);font-weight:600;display:block;margin-top:2px}
+
+/* MANAGER PANEL */
+.mgr-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.mgr-title{font-size:1rem;font-weight:800;color:var(--green)}
+.mgr-date-row{display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
+.mgr-date-inp{border:2px solid var(--border);border-radius:10px;padding:8px 12px;font-size:.85rem;font-weight:700;color:var(--green);font-family:inherit;flex:1;min-width:130px}
+.mgr-date-inp:focus{outline:none;border-color:var(--pink)}
+.mgr-emp-list{display:flex;flex-direction:column;gap:8px}
+.mgr-emp-row{background:var(--pearl);border-radius:12px;padding:14px 16px;cursor:pointer;transition:all .15s;border:2px solid transparent}
+.mgr-emp-row:hover{border-color:var(--green);background:var(--green-lt)}
+.mgr-emp-name{font-size:.9rem;font-weight:800;color:var(--green)}
+.mgr-emp-status{font-size:.75rem;color:var(--slate);font-weight:600;margin-top:2px}
+
+/* MANAGER EMPLOYEE DETAIL */
+.mgr-rec-list{display:flex;flex-direction:column;gap:10px;margin-top:8px}
+.mgr-rec-card{background:var(--white);border-radius:12px;padding:14px 16px;border:1.5px solid var(--border)}
+.mgr-rec-time{font-size:.88rem;font-weight:700;color:var(--green);margin-bottom:6px}
+.mgr-rec-meta{font-size:.73rem;color:var(--slate);font-weight:600}
+.mgr-rec-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.btn-mgr{border:none;border-radius:8px;padding:7px 14px;font-size:.78rem;font-weight:700;cursor:pointer;font-family:inherit;transition:all .15s}
+.btn-mgr:active{transform:scale(.95)}
+.btn-mgr-edit{background:var(--green-lt);color:var(--green)}
+.btn-mgr-add{background:var(--pink);color:var(--green)}
+
+/* EDIT TIME MODAL */
+.edit-modal-overlay{position:fixed;inset:0;background:rgba(16,66,55,.55);z-index:2000;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(3px)}
+.edit-modal-box{background:var(--white);border-radius:20px;padding:28px 24px;width:100%;max-width:360px;box-shadow:0 8px 40px rgba(16,66,55,.25)}
+.edit-modal-title{font-size:1rem;font-weight:800;color:var(--green);margin-bottom:18px}
+.edit-field{margin-bottom:14px}
+.edit-field label{font-size:.75rem;font-weight:700;color:var(--slate);display:block;margin-bottom:5px;text-transform:uppercase;letter-spacing:.06em}
+.edit-field input,.edit-field textarea,.edit-field select{width:100%;border:2px solid var(--border);border-radius:10px;padding:10px 12px;font-size:.9rem;font-weight:600;color:var(--green);font-family:inherit;background:var(--white)}
+.edit-field input:focus,.edit-field textarea:focus,.edit-field select:focus{outline:none;border-color:var(--pink)}
+.edit-modal-btns{display:flex;gap:10px;margin-top:18px}
+
 /* PIN MODAL */
 .pin-overlay{position:fixed;inset:0;background:rgba(16,66,55,.55);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(3px)}
 .pin-box{background:var(--white);border-radius:20px;padding:32px 28px;width:100%;max-width:340px;box-shadow:0 8px 40px rgba(16,66,55,.25);text-align:center}
@@ -364,7 +406,7 @@ async function loadBranch(){
 // ════════════════════════════════
 async function loadEmployees(){
   try{
-    let q = db.from('employees').select('id,name,branch_id,allowed_branches,pin').eq('active',true).order('name',{ascending:true});
+    let q = db.from('employees').select('id,name,branch_id,allowed_branches,pin,is_manager').eq('active',true).order('name',{ascending:true});
     // Show employee if their primary branch OR allowed_branches includes this branch
     // Filter done client-side after fetch to support allowed_branches array
     const{data,error} = await q;
@@ -497,8 +539,21 @@ function pinCancel(){
   _pinPending=null;
 }
 
-async function _doSelectEmployee(id, name){
+async function _doClockFlow(id, name){
+  return _doSelectEmployee(id, name, true);
+}
+
+async function _doSelectEmployee(id, name, skipManagerCheck=false){
   SELECTED = {id, name};
+  // Manager: show choice screen instead of going straight to clock-in
+  if(!skipManagerCheck){
+    const emp = EMPLOYEES.find(e=>e.id===id);
+    if(emp && emp.is_manager){
+      go('s-mgr-choice');
+      document.getElementById('mgr-choice-name').textContent = name;
+      return;
+    }
+  }
   go('s-loading');
   document.getElementById('loading-txt').textContent = 'Loading status...';
   try{
@@ -1064,6 +1119,264 @@ function fmtHrs(h){
 }
 
 // ════════════════════════════════
+// MANAGER FEATURE
+// ════════════════════════════════
+let MGR_DATE = '';   // currently viewed date in mgr panel
+let MGR_EMP_ID = null; // currently viewed employee in detail screen
+let MGR_EDIT_REC_ID = null; // null = new record, uuid = editing existing
+
+function mgrChoiceClockIn(){
+  // Manager chose to clock in for themselves — bypass manager check, run full normal clock flow
+  _doClockFlow(SELECTED.id, SELECTED.name);
+}
+
+function mgrChoiceManage(){
+  // Set default date to today
+  const today = todayStr();
+  document.getElementById('mgr-date-inp').value = today;
+  MGR_DATE = today;
+  loadMgrPanel();
+  go('s-mgr-panel');
+}
+
+async function loadMgrPanel(){
+  MGR_DATE = document.getElementById('mgr-date-inp').value || todayStr();
+  const list = document.getElementById('mgr-emp-list');
+  list.innerHTML = '<div style="text-align:center;padding:24px;color:var(--slate)">Loading...</div>';
+  try{
+    // Fetch all attendance records for this branch on the selected date
+    const{data, error} = await db.from('attendance')
+      .select('id,employee_id,clock_in,clock_out,hours_worked,record_type')
+      .eq('branch_id', BRANCH_ID)
+      .eq('date', MGR_DATE)
+      .order('clock_in',{ascending:true});
+    if(error) throw error;
+
+    // Group by employee
+    const byEmp = {};
+    (data||[]).forEach(r=>{
+      if(!byEmp[r.employee_id]) byEmp[r.employee_id]=[];
+      byEmp[r.employee_id].push(r);
+    });
+
+    // Also include employees with no records (so manager can add)
+    const empMap = {};
+    EMPLOYEES.forEach(e=>{ empMap[e.id]=e.name; });
+
+    // Build list: employees with records first, then the rest
+    const withRecs = Object.keys(byEmp);
+    const withoutRecs = EMPLOYEES.map(e=>e.id).filter(id=>!byEmp[id]);
+
+    let html = '';
+    withRecs.forEach(eid=>{
+      const recs = byEmp[eid];
+      const nm = empMap[eid] || 'Unknown';
+      const totalH = recs.reduce((s,r)=>s+(r.hours_worked||0),0);
+      html += `<div class="mgr-emp-row" onclick="loadMgrEmpDetail('${eid}','${nm.replace(/'/g,"\\'")}')">
+        <div>
+          <div class="mgr-emp-name">${nm}</div>
+          <div class="mgr-emp-status">${recs.length} record${recs.length>1?'s':''} · ${fmtHours(totalH)}</div>
+        </div>
+        <div style="font-size:1.2rem;color:var(--slate)">›</div>
+      </div>`;
+    });
+    withoutRecs.forEach(eid=>{
+      const nm = empMap[eid] || 'Unknown';
+      html += `<div class="mgr-emp-row" onclick="loadMgrEmpDetail('${eid}','${nm.replace(/'/g,"\\'")}')">
+        <div>
+          <div class="mgr-emp-name">${nm}</div>
+          <div class="mgr-emp-status" style="color:var(--slate)">No records</div>
+        </div>
+        <div style="font-size:1.2rem;color:var(--slate)">›</div>
+      </div>`;
+    });
+    list.innerHTML = html || '<div style="text-align:center;padding:24px;color:var(--slate)">No employees found</div>';
+  }catch(e){
+    list.innerHTML = '<div style="text-align:center;padding:24px;color:var(--red)">⚠️ Error loading records</div>';
+    console.error('[MGR] loadMgrPanel error:', e);
+  }
+}
+
+async function loadMgrEmpDetail(empId, empName){
+  MGR_EMP_ID = empId;
+  document.getElementById('mgr-emp-detail-name').textContent = empName;
+  document.getElementById('mgr-emp-detail-date').textContent = 'Date: ' + MGR_DATE;
+  const list = document.getElementById('mgr-rec-list');
+  list.innerHTML = '<div style="text-align:center;padding:24px;color:var(--slate)">Loading...</div>';
+  go('s-mgr-emp');
+
+  try{
+    const{data, error} = await db.from('attendance')
+      .select('*')
+      .eq('employee_id', empId)
+      .eq('date', MGR_DATE)
+      .order('clock_in',{ascending:true});
+    if(error) throw error;
+    const recs = data || [];
+    if(!recs.length){
+      list.innerHTML = '<div style="text-align:center;padding:24px;color:var(--slate)">No records for this date</div>';
+      return;
+    }
+    list.innerHTML = recs.map(r=>{
+      const cin  = formatSaudiTime(r.clock_in);
+      const cout = r.clock_out ? formatSaudiTime(r.clock_out) : '—';
+      const h    = r.hours_worked != null ? fmtHours(r.hours_worked) : 'open';
+      const tag  = r.record_type ? `<span style="font-size:.7rem;background:var(--green-lt);color:var(--green);padding:2px 7px;border-radius:20px;font-weight:700">${r.record_type}</span>` : '';
+      return `<div class="mgr-rec-card">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+          <div>
+            <div class="mgr-rec-time">In: ${cin} &nbsp;→&nbsp; Out: ${cout}</div>
+            <div class="mgr-rec-meta">${h} &nbsp; ${tag}</div>
+          </div>
+          <div class="mgr-rec-actions">
+            <button class="btn-mgr btn-mgr-edit" onclick="openMgrEdit('${r.id}','${empId}','${empName.replace(/'/g,"\\'")}')">Edit</button>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+  }catch(e){
+    list.innerHTML = '<div style="text-align:center;padding:24px;color:var(--red)">⚠️ Error loading records</div>';
+    console.error('[MGR] loadMgrEmpDetail error:', e);
+  }
+}
+
+function openMgrEdit(recId, empId, empName){
+  MGR_EDIT_REC_ID = recId;
+  document.getElementById('mgr-edit-title').textContent = 'Edit Record – ' + empName;
+  // Populate employee dropdown (single selection, locked to this employee)
+  const sel = document.getElementById('mgr-edit-emp-sel');
+  sel.innerHTML = `<option value="${empId}" selected>${empName}</option>`;
+  sel.disabled = true;
+  document.getElementById('mgr-edit-date').value = MGR_DATE;
+  // Fetch existing record to pre-fill times
+  db.from('attendance').select('clock_in,clock_out').eq('id',recId).maybeSingle().then(({data})=>{
+    if(data){
+      document.getElementById('mgr-edit-cin').value  = data.clock_in  ? utcToSaudiTimeInput(data.clock_in)  : '';
+      document.getElementById('mgr-edit-cout').value = data.clock_out ? utcToSaudiTimeInput(data.clock_out) : '';
+    }
+  });
+  document.getElementById('mgr-edit-reason').value = '';
+  document.getElementById('mgr-edit-overlay').style.display = 'flex';
+}
+
+function mgrAddNewRecord(empId){
+  MGR_EDIT_REC_ID = null;
+  document.getElementById('mgr-edit-title').textContent = 'Add New Record';
+  const sel = document.getElementById('mgr-edit-emp-sel');
+  sel.disabled = false;
+  sel.innerHTML = '<option value="">— select employee —</option>' +
+    EMPLOYEES.map(e=>`<option value="${e.id}"${e.id===empId?' selected':''}>${e.name}</option>`).join('');
+  document.getElementById('mgr-edit-date').value = MGR_DATE;
+  document.getElementById('mgr-edit-cin').value  = '';
+  document.getElementById('mgr-edit-cout').value = '';
+  document.getElementById('mgr-edit-reason').value = '';
+  document.getElementById('mgr-edit-overlay').style.display = 'flex';
+}
+
+function closeMgrEdit(){
+  document.getElementById('mgr-edit-overlay').style.display = 'none';
+}
+
+function utcToSaudiTimeInput(utcStr){
+  // Convert UTC ISO string to HH:MM in Saudi time for <input type="time">
+  const d = new Date(utcStr);
+  const saudi = new Date(d.getTime() + 3*60*60*1000);
+  return String(saudi.getUTCHours()).padStart(2,'0') + ':' + String(saudi.getUTCMinutes()).padStart(2,'0');
+}
+
+async function saveMgrRecord(){
+  const empSel    = document.getElementById('mgr-edit-emp-sel');
+  const empId     = empSel.value;
+  const dateVal   = document.getElementById('mgr-edit-date').value;
+  const cinVal    = document.getElementById('mgr-edit-cin').value;
+  const coutVal   = document.getElementById('mgr-edit-cout').value;
+  const reason    = document.getElementById('mgr-edit-reason').value.trim() || 'Manager adjustment';
+
+  if(!empId){  showToast('Select an employee', 'error'); return; }
+  if(!dateVal){ showToast('Select a date', 'error'); return; }
+  if(!cinVal){  showToast('Clock-in time required', 'error'); return; }
+
+  // Build UTC timestamps from Saudi time input
+  function saudiInputToUTC(dateStr, timeStr){
+    // dateStr = YYYY-MM-DD (Saudi date), timeStr = HH:MM (Saudi time)
+    const [y,mo,d] = dateStr.split('-').map(Number);
+    const [h,m]    = timeStr.split(':').map(Number);
+    // Saudi time = UTC+3, so subtract 3h to get UTC
+    return new Date(Date.UTC(y, mo-1, d, h-3, m, 0));
+  }
+
+  const cinUTC  = saudiInputToUTC(dateVal, cinVal);
+  const coutUTC = coutVal ? saudiInputToUTC(dateVal, coutVal) : null;
+
+  // Handle clock-out before clock-in (crossed midnight) — add 1 day to clock-out date
+  if(coutUTC && coutUTC <= cinUTC){
+    coutUTC.setUTCDate(coutUTC.getUTCDate() + 1);
+  }
+
+  const hoursWorked = coutUTC ? parseFloat(((coutUTC - cinUTC) / 3600000).toFixed(2)) : null;
+  const isFriday = cinUTC.getUTCDay() === 5; // Friday check based on UTC clock-in (Saudi date handles this correctly for most cases)
+
+  try{
+    if(MGR_EDIT_REC_ID){
+      // EDIT existing record
+      // First log to audit table
+      const{data:oldRec} = await db.from('attendance').select('clock_in,clock_out').eq('id',MGR_EDIT_REC_ID).maybeSingle();
+      // Update attendance record
+      const{error} = await db.from('attendance').update({
+        clock_in:     cinUTC.toISOString(),
+        clock_out:    coutUTC ? coutUTC.toISOString() : null,
+        hours_worked: hoursWorked,
+        record_type:  'manager_edit'
+      }).eq('id', MGR_EDIT_REC_ID);
+      if(error) throw error;
+
+      // Log to audit table (best-effort — don't fail if table missing)
+      try{
+        await db.from('attendance_adjustments').insert([{
+          attendance_id: MGR_EDIT_REC_ID,
+          adjusted_by:   SELECTED.id,
+          field_changed: 'clock_in/clock_out',
+          old_value:     oldRec?.clock_in  || null,
+          new_value:     cinUTC.toISOString(),
+          reason:        reason
+        }]);
+      }catch(auditErr){ console.warn('[MGR] Audit log failed (table may not exist yet):', auditErr); }
+
+      // Recalculate daily summary
+      updateDailySummary(empId, dateVal, isFriday).catch(()=>{});
+      showToast('Record updated ✓', 'ok');
+    } else {
+      // ADD new record
+      const{error} = await db.from('attendance').insert([{
+        employee_id:  empId,
+        branch_id:    BRANCH_ID,
+        clock_in:     cinUTC.toISOString(),
+        clock_out:    coutUTC ? coutUTC.toISOString() : null,
+        date:         dateVal,
+        is_friday:    isFriday,
+        hours_worked: hoursWorked,
+        gps_verified: false,
+        record_type:  'manager_add'
+      }]);
+      if(error) throw error;
+      updateDailySummary(empId, dateVal, isFriday).catch(()=>{});
+      showToast('Record added ✓', 'ok');
+    }
+    closeMgrEdit();
+    // Refresh current view
+    if(MGR_EMP_ID){
+      const nm = document.getElementById('mgr-emp-detail-name').textContent;
+      await loadMgrEmpDetail(MGR_EMP_ID, nm);
+    } else {
+      await loadMgrPanel();
+    }
+  }catch(e){
+    console.error('[MGR] saveMgrRecord error:', e);
+    showToast('Save failed — check connection', 'error');
+  }
+}
+
+// ════════════════════════════════
 // TOAST
 // ════════════════════════════════
 let tTmr;
@@ -1076,6 +1389,104 @@ function showToast(msg, cls=''){
   tTmr = setTimeout(()=>t.classList.remove('up'), 3400);
 }
 </script>
+<!-- MANAGER CHOICE SCREEN -->
+<div class="screen" id="s-mgr-choice">
+  <div style="width:100%;max-width:420px;padding:28px 20px">
+    <div style="text-align:center;margin-bottom:24px">
+      <div style="font-size:2.2rem;margin-bottom:8px">👤</div>
+      <div style="font-size:1.15rem;font-weight:800;color:var(--green)" id="mgr-choice-name"></div>
+      <div style="font-size:.82rem;color:var(--slate);margin-top:4px">What do you want to do?</div>
+    </div>
+    <div class="mgr-choice-wrap">
+      <button class="mgr-choice-btn" onclick="mgrChoiceClockIn()">
+        <span class="mgr-choice-icon">⏱️</span>
+        <span>
+          <span class="mgr-choice-label">Clock In / Out</span>
+          <span class="mgr-choice-sub">Record my own attendance</span>
+        </span>
+      </button>
+      <button class="mgr-choice-btn" onclick="mgrChoiceManage()">
+        <span class="mgr-choice-icon">📋</span>
+        <span>
+          <span class="mgr-choice-label">Manage Branch</span>
+          <span class="mgr-choice-sub">View & edit employee records</span>
+        </span>
+      </button>
+    </div>
+    <button onclick="go('s-select')" style="margin-top:20px;width:100%;padding:12px;background:none;border:1.5px solid var(--border);border-radius:12px;color:var(--slate);font-size:.88rem;cursor:pointer">← Back</button>
+  </div>
+</div>
+
+<!-- MANAGER PANEL SCREEN (employee list for a date) -->
+<div class="screen" id="s-mgr-panel">
+  <div style="width:100%;max-width:480px;padding:0 0 80px">
+    <div class="mgr-header">
+      <button onclick="go('s-mgr-choice')" style="background:none;border:none;font-size:1.3rem;cursor:pointer;padding:4px">←</button>
+      <div class="mgr-title">Branch Records</div>
+      <div style="width:32px"></div>
+    </div>
+    <div style="padding:12px 16px 4px">
+      <div class="mgr-date-row">
+        <label style="font-size:.8rem;font-weight:700;color:var(--slate)">Date</label>
+        <input type="date" class="mgr-date-inp" id="mgr-date-inp" onchange="loadMgrPanel()">
+      </div>
+    </div>
+    <div id="mgr-emp-list" class="mgr-emp-list"></div>
+    <div style="padding:12px 16px">
+      <button class="btn-mgr btn-mgr-add" onclick="mgrAddNewRecord(null)" style="width:100%">+ Add New Record</button>
+    </div>
+  </div>
+</div>
+
+<!-- MANAGER EMPLOYEE DETAIL SCREEN -->
+<div class="screen" id="s-mgr-emp">
+  <div style="width:100%;max-width:480px;padding:0 0 80px">
+    <div class="mgr-header">
+      <button onclick="go('s-mgr-panel')" style="background:none;border:none;font-size:1.3rem;cursor:pointer;padding:4px">←</button>
+      <div class="mgr-title" id="mgr-emp-detail-name">Employee</div>
+      <div style="width:32px"></div>
+    </div>
+    <div style="padding:8px 16px;font-size:.8rem;color:var(--slate);font-weight:600" id="mgr-emp-detail-date"></div>
+    <div id="mgr-rec-list" class="mgr-rec-list"></div>
+    <div style="padding:12px 16px">
+      <button class="btn-mgr btn-mgr-add" id="mgr-add-rec-btn" onclick="mgrAddNewRecord(MGR_EMP_ID)" style="width:100%">+ Add Record for This Employee</button>
+    </div>
+  </div>
+</div>
+
+<!-- MANAGER EDIT/ADD MODAL -->
+<div class="edit-modal-overlay" id="mgr-edit-overlay" style="display:none" onclick="if(event.target===this)closeMgrEdit()">
+  <div class="edit-modal-box">
+    <div class="edit-modal-title" id="mgr-edit-title">Edit Record</div>
+    <div class="edit-field">
+      <label>Employee</label>
+      <select id="mgr-edit-emp-sel" style="width:100%;padding:10px;border:1.5px solid var(--border);border-radius:10px;font-size:.93rem;background:var(--white)">
+        <option value="">— select employee —</option>
+      </select>
+    </div>
+    <div class="edit-field">
+      <label>Date</label>
+      <input type="date" id="mgr-edit-date">
+    </div>
+    <div class="edit-field">
+      <label>Clock In (Saudi time)</label>
+      <input type="time" id="mgr-edit-cin">
+    </div>
+    <div class="edit-field">
+      <label>Clock Out (Saudi time) — leave blank if still open</label>
+      <input type="time" id="mgr-edit-cout">
+    </div>
+    <div class="edit-field">
+      <label>Reason / Note</label>
+      <input type="text" id="mgr-edit-reason" placeholder="e.g. corrected wrong time">
+    </div>
+    <div class="edit-modal-btns">
+      <button onclick="closeMgrEdit()" style="flex:1;padding:13px;border:1.5px solid var(--border);border-radius:12px;background:var(--white);font-size:.93rem;cursor:pointer">Cancel</button>
+      <button onclick="saveMgrRecord()" style="flex:1;padding:13px;background:var(--green);color:#fff;border:none;border-radius:12px;font-size:.93rem;font-weight:700;cursor:pointer">Save</button>
+    </div>
+  </div>
+</div>
+
 <!-- PIN MODAL -->
 <div class="pin-overlay" id="pin-overlay" style="display:none">
   <div class="pin-box">
