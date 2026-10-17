@@ -1353,7 +1353,7 @@ async function saveMgrRecord(){
       showToast('Record updated ✓', 't-gold');
     } else {
       // ADD new record
-      const{error} = await db.from('attendance').insert([{
+      const{data:addedRec,error} = await db.from('attendance').insert([{
         employee_id:  empId,
         branch_id:    BRANCH_ID,
         clock_in:     cinUTC.toISOString(),
@@ -1363,8 +1363,21 @@ async function saveMgrRecord(){
         hours_worked: hoursWorked,
         gps_verified: false,
         record_type:  'manager_add'
-      }]);
+      }]).select('id').maybeSingle();
       if(error) throw error;
+
+      // Log to audit table (best-effort)
+      try{
+        await db.from('attendance_adjustments').insert([{
+          attendance_id: addedRec?.id || null,
+          adjusted_by:   SELECTED.id,
+          field_changed: 'new_record',
+          old_value:     null,
+          new_value:     cinUTC.toISOString(),
+          reason:        reason
+        }]);
+      }catch(auditErr){ console.warn('[MGR] Audit log failed (table may not exist yet):', auditErr); }
+
       updateDailySummary(empId, dateVal, isFriday).catch(()=>{});
       showToast('Record added ✓', 't-gold');
     }

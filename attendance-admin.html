@@ -1811,7 +1811,7 @@ async function loadMgrLog(){
   tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--slate)">Loading...</td></tr>';
   try{
     let q = db.from('attendance_adjustments')
-      .select('id,created_at,adjusted_by,attendance_id,field_changed,old_value,new_value,reason')
+      .select('id,created_at,adjusted_by,attendance_id,field_changed,old_value,new_value,reason,attendance(employee_id,date)')
       .order('created_at',{ascending:false})
       .limit(200);
     if(from) q = q.gte('created_at', from+'T00:00:00Z');
@@ -1832,18 +1832,29 @@ async function loadMgrLog(){
     const empMap = {};
     (EMPLOYEES||[]).forEach(e=>{ empMap[e.id]=e.name; });
 
+    // Saudi time display helper
+    function toSaudiStr(utcStr){
+      if(!utcStr) return '—';
+      const d = new Date(utcStr);
+      d.setUTCHours(d.getUTCHours()+3);
+      return d.toISOString().replace('T',' ').slice(0,16)+' SA';
+    }
+
     tbody.innerHTML = data.map(row=>{
-      const dt   = row.created_at ? new Date(row.created_at).toLocaleString('en-SA',{hour12:false}) : '—';
-      const mgr  = empMap[row.adjusted_by] || row.adjusted_by?.slice(0,8)+'…' || '—';
-      // Attendance ID → employee name requires join; show truncated ID with link hint
-      const empCell = row.attendance_id ? `<span title="${row.attendance_id}" style="font-size:.75rem;color:var(--slate)">${row.attendance_id.slice(0,8)}…</span>` : '—';
-      const oldV = row.old_value ? new Date(row.old_value).toLocaleString('en-SA',{hour12:false}) : '—';
-      const newV = row.new_value ? new Date(row.new_value).toLocaleString('en-SA',{hour12:false}) : '—';
+      const dt   = row.created_at ? toSaudiStr(row.created_at) : '—';
+      const mgr  = empMap[row.adjusted_by] || '—';
+      const attEmpId = row.attendance?.employee_id;
+      const attDate  = row.attendance?.date || '';
+      const empName  = attEmpId ? (empMap[attEmpId]||attEmpId.slice(0,8)+'…') : '—';
+      const empCell  = attDate ? `${empName}<br><small style="color:var(--slate)">${attDate}</small>` : empName;
+      const fieldLabel = row.field_changed === 'new_record' ? '<span style="color:var(--blue);font-weight:700">New Record</span>' : (row.field_changed||'—');
+      const oldV = row.field_changed === 'new_record' ? '—' : toSaudiStr(row.old_value);
+      const newV = toSaudiStr(row.new_value);
       return `<tr>
         <td style="font-size:.8rem;white-space:nowrap">${dt}</td>
         <td style="font-weight:600">${mgr}</td>
-        <td>${empCell}</td>
-        <td style="font-size:.8rem">${row.field_changed||'—'}</td>
+        <td style="font-size:.85rem">${empCell}</td>
+        <td style="font-size:.8rem">${fieldLabel}</td>
         <td style="font-size:.8rem;color:var(--red)">${oldV}</td>
         <td style="font-size:.8rem;color:var(--green)">${newV}</td>
         <td style="font-size:.8rem">${row.reason||'—'}</td>
