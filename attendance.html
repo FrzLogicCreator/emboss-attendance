@@ -1121,71 +1121,86 @@ function fmtHrs(h){
 // ════════════════════════════════
 // MANAGER FEATURE
 // ════════════════════════════════
-let MGR_DATE = '';   // currently viewed date in mgr panel
-let MGR_EMP_ID = null; // currently viewed employee in detail screen
+let MGR_MONTH = '';    // YYYY-MM currently selected
+let MGR_EMP_ID = null; // currently viewed employee
+let MGR_EMP_NAME = ''; // name of currently viewed employee
 let MGR_EDIT_REC_ID = null; // null = new record, uuid = editing existing
+let MGR_EDIT_DATE = ''; // date context for the edit modal
 
 function mgrChoiceClockIn(){
-  // Manager chose to clock in for themselves — bypass manager check, run full normal clock flow
   _doClockFlow(SELECTED.id, SELECTED.name);
 }
 
 function mgrChoiceManage(){
-  // Set default date to today
-  const today = todayStr();
-  document.getElementById('mgr-date-inp').value = today;
-  MGR_DATE = today;
+  // Default to current Saudi month (UTC+3)
+  const saudiNow = new Date(new Date().getTime() + 3*3600000);
+  const ym = saudiNow.getUTCFullYear() + '-' + String(saudiNow.getUTCMonth()+1).padStart(2,'0');
+  document.getElementById('mgr-month-inp').value = ym;
+  MGR_MONTH = ym;
   loadMgrPanel();
   go('s-mgr-panel');
 }
 
 async function loadMgrPanel(){
-  MGR_DATE = document.getElementById('mgr-date-inp').value || todayStr();
+  MGR_MONTH = document.getElementById('mgr-month-inp').value || (() => {
+    const d = new Date(new Date().getTime() + 3*3600000);
+    return d.getUTCFullYear() + '-' + String(d.getUTCMonth()+1).padStart(2,'0');
+  })();
+
   const list = document.getElementById('mgr-emp-list');
   list.innerHTML = '<div style="text-align:center;padding:24px;color:var(--slate)">Loading...</div>';
+
   try{
-    // Fetch all attendance records for this branch on the selected date
+    // Fetch all records for this branch in selected month
+    const dateFrom = MGR_MONTH + '-01';
+    const dateTo   = MGR_MONTH + '-31'; // DB will cap at month end naturally
     const{data, error} = await db.from('attendance')
-      .select('id,employee_id,clock_in,clock_out,hours_worked,record_type')
+      .select('id,employee_id,hours_worked,record_type,date')
       .eq('branch_id', BRANCH_ID)
-      .eq('date', MGR_DATE)
-      .order('clock_in',{ascending:true});
+      .gte('date', dateFrom)
+      .lte('date', dateTo)
+      .order('date',{ascending:true});
     if(error) throw error;
 
-    // Group by employee
+    // Count records + total hours per employee
     const byEmp = {};
     (data||[]).forEach(r=>{
-      if(!byEmp[r.employee_id]) byEmp[r.employee_id]=[];
-      byEmp[r.employee_id].push(r);
+      if(!byEmp[r.employee_id]) byEmp[r.employee_id]={count:0,hours:0,hasAutoClose:false};
+      byEmp[r.employee_id].count++;
+      byEmp[r.employee_id].hours += (r.hours_worked||0);
+      if(r.record_type === 'auto_close' || r.record_type === 'auto-close') byEmp[r.employee_id].hasAutoClose = true;
     });
 
-    // Also include employees with no records (so manager can add)
-    const empMap = {};
-    EMPLOYEES.forEach(e=>{ empMap[e.id]=e.name; });
+    const withRecs    = EMPLOYEES.filter(e=>byEmp[e.id]);
+    const withoutRecs = EMPLOYEES.filter(e=>!byEmp[e.id]);
 
-    // Build list: employees with records first, then the rest
-    const withRecs = Object.keys(byEmp);
-    const withoutRecs = EMPLOYEES.map(e=>e.id).filter(id=>!byEmp[id]);
+    // Month label for display
+    const [mY, mM] = MGR_MONTH.split('-');
+    const monthLabel = new Date(Number(mY), Number(mM)-1, 1)
+      .toLocaleString('en', {month:'long', year:'numeric'});
+    document.getElementById('mgr-month-label').textContent = monthLabel;
 
     let html = '';
-    withRecs.forEach(eid=>{
-      const recs = byEmp[eid];
-      const nm = empMap[eid] || 'Unknown';
-      const totalH = recs.reduce((s,r)=>s+(r.hours_worked||0),0);
-      html += `<div class="mgr-emp-row" onclick="loadMgrEmpDetail('${eid}','${nm.replace(/'/g,"\\'")}')">
-        <div>
-          <div class="mgr-emp-name">${nm}</div>
-          <div class="mgr-emp-status">${recs.length} record${recs.length>1?'s':''} · ${fmtHrs(totalH)}</div>
+    withRecs.forEach(emp=>{
+      const info = byEmp[emp.id];
+      const warn = info.hasAutoClose
+        ? `<span style="font-size:.68rem;background:#fff3cd;color:#856404;padding:2px 7px;border-radius:20px;font-weight:700;margin-left:6px">⚠️ review</span>`
+        : '';
+      const nm = emp.name.replace(/'/g,"\\'");
+      html += `<div class="mgr-emp-row" onclick="loadMgrEmpDetail('${emp.id}','${nm}')">
+        <div style="flex:1;min-width:0">
+          <div class="mgr-emp-name">${emp.name}${warn}</div>
+          <div class="mgr-emp-status">${info.count} records · ${fmtHrs(info.hours)}</div>
         </div>
         <div style="font-size:1.2rem;color:var(--slate)">›</div>
       </div>`;
     });
-    withoutRecs.forEach(eid=>{
-      const nm = empMap[eid] || 'Unknown';
-      html += `<div class="mgr-emp-row" onclick="loadMgrEmpDetail('${eid}','${nm.replace(/'/g,"\\'")}')">
-        <div>
-          <div class="mgr-emp-name">${nm}</div>
-          <div class="mgr-emp-status" style="color:var(--slate)">No records</div>
+    withoutRecs.forEach(emp=>{
+      const nm = emp.name.replace(/'/g,"\\'");
+      html += `<div class="mgr-emp-row" onclick="loadMgrEmpDetail('${emp.id}','${nm}')">
+        <div style="flex:1;min-width:0">
+          <div class="mgr-emp-name">${emp.name}</div>
+          <div class="mgr-emp-status" style="color:#aaa">No records this month</div>
         </div>
         <div style="font-size:1.2rem;color:var(--slate)">›</div>
       </div>`;
@@ -1198,57 +1213,109 @@ async function loadMgrPanel(){
 }
 
 async function loadMgrEmpDetail(empId, empName){
-  MGR_EMP_ID = empId;
+  MGR_EMP_ID   = empId;
+  MGR_EMP_NAME = empName;
   document.getElementById('mgr-emp-detail-name').textContent = empName;
-  document.getElementById('mgr-emp-detail-date').textContent = 'Date: ' + MGR_DATE;
+
+  const [mY, mM] = MGR_MONTH.split('-');
+  const monthLabel = new Date(Number(mY), Number(mM)-1, 1)
+    .toLocaleString('en', {month:'long', year:'numeric'});
+  document.getElementById('mgr-emp-detail-month').textContent = monthLabel;
+
   const list = document.getElementById('mgr-rec-list');
   list.innerHTML = '<div style="text-align:center;padding:24px;color:var(--slate)">Loading...</div>';
   go('s-mgr-emp');
 
   try{
+    const dateFrom = MGR_MONTH + '-01';
+    const dateTo   = MGR_MONTH + '-31';
     const{data, error} = await db.from('attendance')
       .select('*')
       .eq('employee_id', empId)
-      .eq('date', MGR_DATE)
+      .gte('date', dateFrom)
+      .lte('date', dateTo)
+      .order('date',{ascending:true})
       .order('clock_in',{ascending:true});
     if(error) throw error;
+
     const recs = data || [];
     if(!recs.length){
-      list.innerHTML = '<div style="text-align:center;padding:24px;color:var(--slate)">No records for this date</div>';
+      list.innerHTML = '<div style="text-align:center;padding:24px;color:var(--slate)">No records this month</div>';
       return;
     }
-    list.innerHTML = recs.map(r=>{
-      const cin  = formatSaudiTime(r.clock_in);
-      const cout = r.clock_out ? formatSaudiTime(r.clock_out) : '—';
-      const h    = r.hours_worked != null ? fmtHrs(r.hours_worked) : 'open';
-      const tag  = r.record_type ? `<span style="font-size:.7rem;background:var(--green-lt);color:var(--green);padding:2px 7px;border-radius:20px;font-weight:700">${r.record_type}</span>` : '';
-      return `<div class="mgr-rec-card">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+
+    // Group by date
+    const byDate = {};
+    const dateOrder = [];
+    recs.forEach(r=>{
+      if(!byDate[r.date]){ byDate[r.date]=[]; dateOrder.push(r.date); }
+      byDate[r.date].push(r);
+    });
+
+    const dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+    list.innerHTML = dateOrder.map(date=>{
+      const dayRecs = byDate[date];
+      const dayObj  = new Date(date + 'T12:00:00Z');
+      const dayName = dayNames[dayObj.getUTCDay()];
+      const isFri   = dayObj.getUTCDay() === 5;
+      const dayLabel = `${date} (${dayName})`;
+      const dayTag   = isFri
+        ? `<span style="font-size:.65rem;background:#fce7f3;color:#9d174d;padding:2px 7px;border-radius:20px;font-weight:700;margin-left:4px">Friday</span>`
+        : '';
+
+      const recHtml = dayRecs.map(r=>{
+        const cin  = formatSaudiTime(r.clock_in);
+        const cout = r.clock_out ? formatSaudiTime(r.clock_out) : '— open';
+        const h    = r.hours_worked != null ? fmtHrs(r.hours_worked) : '';
+
+        // Record type badge
+        let badge = '';
+        const rt = (r.record_type||'').toLowerCase();
+        if(rt === 'auto_close' || rt === 'auto-close'){
+          badge = `<span style="font-size:.68rem;background:#fff3cd;color:#856404;padding:2px 7px;border-radius:20px;font-weight:700">⚠️ auto-close</span>`;
+        } else if(rt === 'auto_split'){
+          badge = `<span style="font-size:.68rem;background:#fff3cd;color:#856404;padding:2px 7px;border-radius:20px;font-weight:700">⚠️ auto-split</span>`;
+        } else if(rt === 'split'){
+          badge = `<span style="font-size:.68rem;background:var(--blue-lt);color:var(--blue);padding:2px 7px;border-radius:20px;font-weight:700">🌙 split</span>`;
+        } else if(rt === 'manager_edit'){
+          badge = `<span style="font-size:.68rem;background:var(--green-lt);color:var(--green);padding:2px 7px;border-radius:20px;font-weight:700">edited</span>`;
+        } else if(rt === 'manager_add'){
+          badge = `<span style="font-size:.68rem;background:var(--green-lt);color:var(--green);padding:2px 7px;border-radius:20px;font-weight:700">added</span>`;
+        }
+
+        const safeEmp = empName.replace(/'/g,"\\'");
+        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">
           <div>
-            <div class="mgr-rec-time">In: ${cin} &nbsp;→&nbsp; Out: ${cout}</div>
-            <div class="mgr-rec-meta">${h} &nbsp; ${tag}</div>
+            <div style="font-size:.88rem;font-weight:700;color:var(--green)">${cin} → ${cout}</div>
+            <div style="font-size:.75rem;color:var(--slate);margin-top:3px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+              ${h ? `<span>${h}</span>` : ''} ${badge}
+            </div>
           </div>
-          <div class="mgr-rec-actions">
-            <button class="btn-mgr btn-mgr-edit" onclick="openMgrEdit('${r.id}','${empId}','${empName.replace(/'/g,"\\'")}')">Edit</button>
-          </div>
-        </div>
+          <button class="btn-mgr btn-mgr-edit" onclick="openMgrEdit('${r.id}','${empId}','${safeEmp}','${date}')">Edit</button>
+        </div>`;
+      }).join('');
+
+      return `<div style="margin:0 16px 4px">
+        <div style="font-size:.8rem;font-weight:800;color:var(--slate);padding:14px 0 4px;display:flex;align-items:center">${dayLabel}${dayTag}</div>
+        ${recHtml}
       </div>`;
     }).join('');
+
   }catch(e){
     list.innerHTML = '<div style="text-align:center;padding:24px;color:var(--red)">⚠️ Error loading records</div>';
     console.error('[MGR] loadMgrEmpDetail error:', e);
   }
 }
 
-function openMgrEdit(recId, empId, empName){
+function openMgrEdit(recId, empId, empName, date){
   MGR_EDIT_REC_ID = recId;
+  MGR_EDIT_DATE   = date;
   document.getElementById('mgr-edit-title').textContent = 'Edit Record – ' + empName;
-  // Populate employee dropdown (single selection, locked to this employee)
   const sel = document.getElementById('mgr-edit-emp-sel');
   sel.innerHTML = `<option value="${empId}" selected>${empName}</option>`;
-  sel.disabled = true;
-  document.getElementById('mgr-edit-date').value = MGR_DATE;
-  // Fetch existing record to pre-fill times
+  sel.disabled  = true;
+  document.getElementById('mgr-edit-date').value = date;
   db.from('attendance').select('clock_in,clock_out').eq('id',recId).maybeSingle().then(({data})=>{
     if(data){
       document.getElementById('mgr-edit-cin').value  = data.clock_in  ? utcToSaudiTimeInput(data.clock_in)  : '';
@@ -1261,12 +1328,16 @@ function openMgrEdit(recId, empId, empName){
 
 function mgrAddNewRecord(empId){
   MGR_EDIT_REC_ID = null;
+  MGR_EDIT_DATE   = '';
   document.getElementById('mgr-edit-title').textContent = 'Add New Record';
   const sel = document.getElementById('mgr-edit-emp-sel');
   sel.disabled = false;
   sel.innerHTML = '<option value="">— select employee —</option>' +
     EMPLOYEES.map(e=>`<option value="${e.id}"${e.id===empId?' selected':''}>${e.name}</option>`).join('');
-  document.getElementById('mgr-edit-date').value = MGR_DATE;
+  // Default date = today in Saudi
+  const today = todayStr();
+  document.getElementById('mgr-edit-date').value = today;
+  MGR_EDIT_DATE = today;
   document.getElementById('mgr-edit-cin').value  = '';
   document.getElementById('mgr-edit-cout').value = '';
   document.getElementById('mgr-edit-reason').value = '';
@@ -1287,7 +1358,7 @@ function utcToSaudiTimeInput(utcStr){
 async function saveMgrRecord(){
   const empSel    = document.getElementById('mgr-edit-emp-sel');
   const empId     = empSel.value;
-  const dateVal   = document.getElementById('mgr-edit-date').value;
+  const dateVal   = document.getElementById('mgr-edit-date').value || MGR_EDIT_DATE;
   const cinVal    = document.getElementById('mgr-edit-cin').value;
   const coutVal   = document.getElementById('mgr-edit-cout').value;
   const reason    = document.getElementById('mgr-edit-reason').value.trim() || 'Manager adjustment';
@@ -1384,8 +1455,7 @@ async function saveMgrRecord(){
     closeMgrEdit();
     // Refresh current view
     if(MGR_EMP_ID){
-      const nm = document.getElementById('mgr-emp-detail-name').textContent;
-      await loadMgrEmpDetail(MGR_EMP_ID, nm);
+      await loadMgrEmpDetail(MGR_EMP_ID, MGR_EMP_NAME || document.getElementById('mgr-emp-detail-name').textContent);
     } else {
       await loadMgrPanel();
     }
@@ -1436,39 +1506,46 @@ function showToast(msg, cls=''){
   </div>
 </div>
 
-<!-- MANAGER PANEL SCREEN (employee list for a date) -->
+<!-- MANAGER PANEL SCREEN (employee list for a month) -->
 <div class="screen" id="s-mgr-panel">
   <div style="width:100%;max-width:480px;padding:0 0 80px">
-    <div class="mgr-header">
+    <div class="mgr-header" style="padding:14px 16px">
       <button onclick="go('s-mgr-choice')" style="background:none;border:none;font-size:1.3rem;cursor:pointer;padding:4px">←</button>
-      <div class="mgr-title">Branch Records</div>
+      <div class="mgr-title">Manage Branch</div>
       <div style="width:32px"></div>
     </div>
-    <div style="padding:12px 16px 4px">
-      <div class="mgr-date-row">
-        <label style="font-size:.8rem;font-weight:700;color:var(--slate)">Date</label>
-        <input type="date" class="mgr-date-inp" id="mgr-date-inp" onchange="loadMgrPanel()">
+
+    <!-- Month picker -->
+    <div style="padding:8px 16px 12px;background:var(--white);border-bottom:1px solid var(--border)">
+      <div style="font-size:.75rem;font-weight:700;color:var(--slate);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Select Month</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="month" id="mgr-month-inp" onchange="loadMgrPanel()"
+          style="flex:1;padding:10px 12px;border:2px solid var(--border);border-radius:10px;font-size:.95rem;font-weight:700;color:var(--green);font-family:inherit;background:var(--pearl)">
       </div>
+      <div id="mgr-month-label" style="font-size:.82rem;color:var(--slate);margin-top:6px;font-weight:600"></div>
     </div>
-    <div id="mgr-emp-list" class="mgr-emp-list"></div>
-    <div style="padding:12px 16px">
-      <button class="btn-mgr btn-mgr-add" onclick="mgrAddNewRecord(null)" style="width:100%">+ Add New Record</button>
-    </div>
+
+    <div style="padding:10px 16px 4px;font-size:.75rem;color:var(--slate);font-weight:700;text-transform:uppercase;letter-spacing:.05em">Employees</div>
+    <div id="mgr-emp-list" class="mgr-emp-list" style="padding:0 16px"></div>
   </div>
 </div>
 
-<!-- MANAGER EMPLOYEE DETAIL SCREEN -->
+<!-- MANAGER EMPLOYEE DETAIL SCREEN (full month history) -->
 <div class="screen" id="s-mgr-emp">
   <div style="width:100%;max-width:480px;padding:0 0 80px">
-    <div class="mgr-header">
+    <div class="mgr-header" style="padding:14px 16px">
       <button onclick="go('s-mgr-panel')" style="background:none;border:none;font-size:1.3rem;cursor:pointer;padding:4px">←</button>
-      <div class="mgr-title" id="mgr-emp-detail-name">Employee</div>
+      <div style="flex:1;min-width:0">
+        <div class="mgr-title" id="mgr-emp-detail-name" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Employee</div>
+        <div style="font-size:.72rem;color:var(--slate);font-weight:600;margin-top:1px" id="mgr-emp-detail-month"></div>
+      </div>
       <div style="width:32px"></div>
     </div>
-    <div style="padding:8px 16px;font-size:.8rem;color:var(--slate);font-weight:600" id="mgr-emp-detail-date"></div>
-    <div id="mgr-rec-list" class="mgr-rec-list"></div>
+
+    <div id="mgr-rec-list" class="mgr-rec-list" style="padding-bottom:8px"></div>
+
     <div style="padding:12px 16px">
-      <button class="btn-mgr btn-mgr-add" id="mgr-add-rec-btn" onclick="mgrAddNewRecord(MGR_EMP_ID)" style="width:100%">+ Add Record for This Employee</button>
+      <button class="btn-mgr btn-mgr-add" id="mgr-add-rec-btn" onclick="mgrAddNewRecord(MGR_EMP_ID)" style="width:100%;padding:12px;font-size:.88rem">+ Add Record for This Employee</button>
     </div>
   </div>
 </div>

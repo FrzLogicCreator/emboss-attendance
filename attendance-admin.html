@@ -1364,8 +1364,9 @@ async function loadAttendance(){
       <td>${fmtHrs(r.hours_worked||0)}</td>
       <td>${typeLabel}</td>
       <td style="display:flex;gap:4px">${photoIn}${photoOut}</td>
-      <td>
+      <td style="display:flex;gap:4px">
         <button class="btn btn-sm btn-outline" onclick="openAttEdit('${r.id}','${(r.employees?.name||'').replace(/'/g,"\'")}','${r.date}','${fmtTime(r.clock_in)}')">✏️ Correct</button>
+        <button class="btn btn-sm btn-red" onclick="deleteAttRecord('${r.id}','${(r.employees?.name||'').replace(/'/g,"\'")}','${r.date}')">🗑️</button>
       </td>
     </tr>`;
   }).join('');
@@ -1408,17 +1409,37 @@ async function saveAttEdit(){
   const{data:orig} = await db.from('attendance').select('*').eq('id',id).single();
   if(!orig){ showToast('Record not found','t-red'); return; }
 
-  // Build corrected clock_out
-  const correctedOut = new Date(`${date}T${outTime}:00`);
-  const clockIn      = new Date(orig.clock_in);
-  const hoursWorked  = Math.max(0,(correctedOut-clockIn)/3600000);
+  // Build corrected clock_out — Saudi time input (HH:MM) → UTC
+  // Saudi = UTC+3, so subtract 3h using Date.UTC to avoid browser timezone affecting result
+  const [y,mo,d] = date.split('-').map(Number);
+  const [h,m]    = outTime.split(':').map(Number);
+  const correctedOut = new Date(Date.UTC(y, mo-1, d, h-3, m, 0));
+
+  // If clock-out is before clock-in, it crossed midnight — add 1 day
+  const clockIn = new Date(orig.clock_in);
+  if(correctedOut < clockIn) correctedOut.setUTCDate(correctedOut.getUTCDate() + 1);
+
+  const hoursWorked = Math.max(0, (correctedOut - clockIn) / 3600000);
 
   const{error} = await db.from('attendance').update({
     clock_out:    correctedOut.toISOString(),
     hours_worked: parseFloat(hoursWorked.toFixed(2)),
+    record_type:  'manager_edit'
   }).eq('id',id);
 
   if(error){ showToast('Error: '+error.message,'t-red'); return; }
+
+  // Write audit log (best-effort)
+  try{
+    await db.from('attendance_adjustments').insert([{
+      attendance_id: id,
+      adjusted_by:   CURRENT_USER_ID || null,
+      field_changed: 'clock_out',
+      old_value:     orig.clock_out || null,
+      new_value:     correctedOut.toISOString(),
+      reason:        note
+    }]);
+  }catch(auditErr){ console.warn('[ADMIN] Audit log failed:', auditErr); }
 
   // Recalculate daily summary
   const emp = EMPLOYEES.find(e=>e.id===orig.employee_id);
@@ -1426,6 +1447,36 @@ async function saveAttEdit(){
 
   showToast('Record corrected ✅','t-gold');
   closeModal('att-edit-modal');
+  loadAttendance();
+}
+
+async function deleteAttRecord(id, empName, date){
+  if(!confirm(`Delete this attendance record?\n\nEmployee: ${empName}\nDate: ${date}\n\nThis cannot be undone.`)) return;
+
+  // Fetch record before deleting (need employee_id, is_friday for recalc + audit)
+  const{data:rec} = await db.from('attendance').select('*').eq('id',id).single();
+  if(!rec){ showToast('Record not found','t-red'); return; }
+
+  const{error} = await db.from('attendance').delete().eq('id',id);
+  if(error){ showToast('Delete failed: '+error.message,'t-red'); return; }
+
+  // Write audit log (best-effort)
+  try{
+    await db.from('attendance_adjustments').insert([{
+      attendance_id: id,
+      adjusted_by:   null,
+      field_changed: 'deleted',
+      old_value:     rec.clock_in || null,
+      new_value:     null,
+      reason:        `Admin deleted record — ${empName} ${date}`
+    }]);
+  }catch(auditErr){ console.warn('[ADMIN] Audit log failed:', auditErr); }
+
+  // Recalculate daily_summary for this employee/date after deletion
+  const emp = EMPLOYEES.find(e=>e.id===rec.employee_id);
+  if(emp) await recalcDailySummary(rec.employee_id, rec.date, rec.is_friday, emp);
+
+  showToast('Record deleted','t-red');
   loadAttendance();
 }
 
@@ -1443,8 +1494,9 @@ async function recalcDailySummary(empId, date, isFri, emp){
   }
   await db.from('daily_summary').upsert({
     employee_id:empId,date,total_hours:parseFloat(totalHours.toFixed(2)),
-    duty_hours:emp.duty_hours,normal_hours:parseFloat(Math.min(totalHours,emp.duty_hours).toFixed(2)),
-    ot_hours:parseFloat(Math.max(0,totalHours-emp.duty_hours).toFixed(2)),
+    duty_hours:emp.duty_hours,
+    normal_hours: isFri ? 0 : parseFloat(Math.min(totalHours,emp.duty_hours).toFixed(2)),
+    ot_hours:     isFri ? 0 : parseFloat(Math.max(0,totalHours-emp.duty_hours).toFixed(2)),
     is_friday:isFri,hourly_rate:parseFloat(hourlyRate.toFixed(4)),
     normal_pay:parseFloat(normalPay.toFixed(2)),ot_pay:parseFloat(otPay.toFixed(2)),
     friday_pay:parseFloat(fridayPay.toFixed(2)),
@@ -1847,9 +1899,18 @@ async function loadMgrLog(){
       const attDate  = row.attendance?.date || '';
       const empName  = attEmpId ? (empMap[attEmpId]||attEmpId.slice(0,8)+'…') : '—';
       const empCell  = attDate ? `${empName}<br><small style="color:var(--slate)">${attDate}</small>` : empName;
-      const fieldLabel = row.field_changed === 'new_record' ? '<span style="color:var(--blue);font-weight:700">New Record</span>' : (row.field_changed||'—');
-      const oldV = row.field_changed === 'new_record' ? '—' : toSaudiStr(row.old_value);
-      const newV = toSaudiStr(row.new_value);
+      let fieldLabel, oldV, newV;
+      if(row.field_changed === 'new_record'){
+        fieldLabel = '<span style="color:var(--blue);font-weight:700">➕ New Record</span>';
+        oldV = '—'; newV = toSaudiStr(row.new_value);
+      } else if(row.field_changed === 'deleted'){
+        fieldLabel = '<span style="color:var(--red);font-weight:700">🗑️ Deleted</span>';
+        oldV = toSaudiStr(row.old_value); newV = '—';
+      } else {
+        fieldLabel = row.field_changed || '—';
+        oldV = toSaudiStr(row.old_value);
+        newV = toSaudiStr(row.new_value);
+      }
       return `<tr>
         <td style="font-size:.8rem;white-space:nowrap">${dt}</td>
         <td style="font-weight:600">${mgr}</td>
