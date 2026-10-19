@@ -42,6 +42,7 @@
   --white:#fff;--slate:#5f6b64;
   --border:#dddad3;--red:#c0392b;
   --gold:#C9A84C;--green-lt:#d6f0e4;
+  --blue:#1d4ed8;--blue-lt:#dbeafe;
 }
 html,body{min-height:100vh;font-family:'Segoe UI',system-ui,sans-serif;background:var(--cream);-webkit-tap-highlight-color:transparent}
 .screen{display:none;min-height:100vh;flex-direction:column;align-items:center}
@@ -1168,7 +1169,8 @@ async function loadMgrPanel(){
       if(!byEmp[r.employee_id]) byEmp[r.employee_id]={count:0,hours:0,hasAutoClose:false};
       byEmp[r.employee_id].count++;
       byEmp[r.employee_id].hours += (r.hours_worked||0);
-      if(r.record_type === 'auto_close' || r.record_type === 'auto-close') byEmp[r.employee_id].hasAutoClose = true;
+      const rt = (r.record_type||'').toLowerCase();
+      if(rt === 'auto_close' || rt === 'auto-close' || rt === 'auto_split') byEmp[r.employee_id].hasAutoClose = true;
     });
 
     const withRecs    = EMPLOYEES.filter(e=>byEmp[e.id]);
