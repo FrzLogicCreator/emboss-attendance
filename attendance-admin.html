@@ -254,6 +254,7 @@ tr:hover td{background:#f9f7f4}
       <div class="kpi">
         <div class="kpi-val" id="k-cost">–</div>
         <div class="kpi-sub" style="font-size:.68rem;color:var(--slate)">Gross Labour Cost</div>
+        <div class="kpi-sub" id="k-cost-breakdown" style="font-size:.63rem;color:var(--slate);margin-top:2px"></div>
         <div class="kpi-lbl">Month-to-date (excl. ded.)</div>
       </div>
     </div>
@@ -827,6 +828,7 @@ async function initAdmin(){
   loadKPIs();
   loadLive();
   loadDeductions();
+  recalcAllFridaysThisMonth(); // silent background recalc of Friday rows using new formula
   // Set default dates
   const today = todayStrSaudi();
   const weekAgo = new Date(getSaudiNow().getTime()-7*24*60*60*1000).toISOString().split('T')[0];
@@ -927,11 +929,19 @@ async function loadKPIs(){
   const totalHrs = (todayRecs||[]).reduce((s,r)=>s+(r.hours_worked||0),0);
   document.getElementById('k-hours').textContent = totalHrs.toFixed(1)+' hrs';
 
-  // Month cost
+  // Month cost with breakdown
   const{data:monthSums} = await db.from('daily_summary')
-    .select('total_pay').gte('date',month1).lte('date',today);
-  const monthCost = (monthSums||[]).reduce((s,r)=>s+(r.total_pay||0),0);
-  document.getElementById('k-cost').textContent = 'SAR '+monthCost.toFixed(0);
+    .select('normal_pay,ot_pay,friday_pay,total_pay').gte('date',month1).lte('date',today);
+  const monthCost   = (monthSums||[]).reduce((s,r)=>s+(r.total_pay||0),0);
+  const basicTotal  = (monthSums||[]).reduce((s,r)=>s+(r.normal_pay||0),0);
+  const otTotal     = (monthSums||[]).reduce((s,r)=>s+(r.ot_pay||0),0);
+  const fridayTotal = (monthSums||[]).reduce((s,r)=>s+(r.friday_pay||0),0);
+  // Fetch allowances from employees table (monthly fixed, not in daily_summary)
+  const allowTotal = EMPLOYEES.filter(e=>e.active).reduce((s,e)=>s+(e.allowance||0),0);
+  document.getElementById('k-cost').textContent = 'SAR '+(monthCost+allowTotal).toFixed(0);
+  const fmt = v => v>=1000 ? (v/1000).toFixed(1)+'k' : v.toFixed(0);
+  document.getElementById('k-cost-breakdown').textContent =
+    `Basic: ${fmt(basicTotal)} | OT: ${fmt(otTotal)} | Fri: ${fmt(fridayTotal)} | Allow: ${fmt(allowTotal)}`;
 }
 
 // ══════════════════════════════════
@@ -956,25 +966,25 @@ async function loadLive(){
 
   const clockedIds = new Set(deduplicated.map(r=>r.employee_id));
 
-  // Check for 14h warning and 15h auto clock-out
+  // Check for 16h warning and 17h auto clock-out (matches attendance.html)
   for(const r of deduplicated){
     const hrs = (nowMs - new Date(r.clock_in).getTime()) / 3600000;
-    if(hrs >= 15){
-      // Auto clock-out at exactly 15 hours
-      const autoOut = new Date(new Date(r.clock_in).getTime() + 15*3600000);
+    if(hrs >= 17){
+      // Auto clock-out at exactly 17 hours
+      const autoOut = new Date(new Date(r.clock_in).getTime() + 17*3600000);
       await db.from('attendance').update({
         clock_out: autoOut.toISOString(),
-        hours_worked: 15,
+        hours_worked: 17,
         record_type: 'auto'
       }).eq('id', r.id);
       const emp = EMPLOYEES.find(e=>e.id===r.employee_id);
       if(emp) await recalcDailySummary(r.employee_id, r.date, r.is_friday, emp);
-      showToast(`🚨 Auto clock-out: ${r.employees?.name} exceeded 15 hours`, 't-red');
-    } else if(hrs >= 14){
-      // 14h warning
-      const warnKey = `warn14_${r.id}`;
+      showToast(`🚨 Auto clock-out: ${r.employees?.name} exceeded 17 hours`, 't-red');
+    } else if(hrs >= 16){
+      // 16h warning
+      const warnKey = `warn16_${r.id}`;
       if(!sessionStorage.getItem(warnKey)){
-        showToast(`⚠️ ${r.employees?.name} approaching 15h limit`, 't-gold');
+        showToast(`⚠️ ${r.employees?.name} approaching 17h limit`, 't-gold');
         sessionStorage.setItem(warnKey, '1');
       }
     }
@@ -1486,22 +1496,50 @@ async function recalcDailySummary(empId, date, isFri, emp){
   const d = new Date(date);
   const daysInMonth = new Date(d.getFullYear(),d.getMonth()+1,0).getDate();
   const hourlyRate  = emp.basic_salary/(emp.duty_hours*daysInMonth);
-  let normalPay=0,otPay=0,fridayPay=0;
-  if(isFri){ fridayPay=totalHours*hourlyRate*1.5; }
-  else {
-    normalPay = Math.min(totalHours,emp.duty_hours)*hourlyRate;
-    otPay     = Math.max(0,totalHours-emp.duty_hours)*hourlyRate*(emp.ot_multiplier||1.5);
-  }
+  // Normal hours and OT calculated same as any day (Friday included)
+  const normalHrs = Math.min(totalHours, emp.duty_hours);
+  const otHrs     = Math.max(0, totalHours - emp.duty_hours);
+  const normalPay = normalHrs * hourlyRate;
+  const otPay     = otHrs * hourlyRate * (emp.ot_multiplier || 1.5);
+  // Friday bonus: capped at basic duty hours × rate × 1.5 (on top of normal + OT)
+  const fridayPay = isFri ? (normalHrs * hourlyRate * 1.5) : 0;
   await db.from('daily_summary').upsert({
     employee_id:empId,date,total_hours:parseFloat(totalHours.toFixed(2)),
     duty_hours:emp.duty_hours,
-    normal_hours: isFri ? 0 : parseFloat(Math.min(totalHours,emp.duty_hours).toFixed(2)),
-    ot_hours:     isFri ? 0 : parseFloat(Math.max(0,totalHours-emp.duty_hours).toFixed(2)),
+    normal_hours: parseFloat(normalHrs.toFixed(2)),
+    ot_hours:     parseFloat(otHrs.toFixed(2)),
     is_friday:isFri,hourly_rate:parseFloat(hourlyRate.toFixed(4)),
     normal_pay:parseFloat(normalPay.toFixed(2)),ot_pay:parseFloat(otPay.toFixed(2)),
     friday_pay:parseFloat(fridayPay.toFixed(2)),
     total_pay:parseFloat((normalPay+otPay+fridayPay).toFixed(2))
   },{onConflict:'employee_id,date'});
+}
+
+// ══════════════════════════════════
+// SILENT FRIDAY RECALC ON LOAD
+// ══════════════════════════════════
+async function recalcAllFridaysThisMonth(){
+  try {
+    const now = getSaudiNow();
+    const month1 = `${now.getUTCFullYear()}-${String(now.getUTCMonth()+1).padStart(2,'0')}-01`;
+    const today  = todayStrSaudi();
+    // Fetch all Friday rows in daily_summary for current month
+    const{data:fridayRows} = await db.from('daily_summary')
+      .select('employee_id,date')
+      .eq('is_friday', true)
+      .gte('date', month1)
+      .lte('date', today);
+    if(!fridayRows || fridayRows.length === 0) return;
+    // Recalc each row using the new formula
+    for(const row of fridayRows){
+      const emp = EMPLOYEES.find(e => e.id === row.employee_id);
+      if(!emp) continue;
+      await recalcDailySummary(row.employee_id, row.date, true, emp);
+    }
+    console.log(`Silent Friday recalc: updated ${fridayRows.length} row(s)`);
+  } catch(err){
+    console.warn('Silent Friday recalc error:', err);
+  }
 }
 
 // ══════════════════════════════════

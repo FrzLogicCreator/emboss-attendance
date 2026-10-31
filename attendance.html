@@ -999,23 +999,23 @@ async function updateDailySummary(empId, date, isFri){
     const daysInMonth = new Date(d.getFullYear(),d.getMonth()+1,0).getDate();
     const hourlyRate  = basicSalary / (dutyHours * daysInMonth);
 
-    let normalPay=0, otPay=0, fridayPay=0;
-    if(isFri){
-      fridayPay = totalHours * hourlyRate * 1.5;
-    } else {
-      const normalHrs = Math.min(totalHours, dutyHours);
-      const otHrs     = Math.max(0, totalHours - dutyHours);
-      normalPay = normalHrs * hourlyRate;
-      otPay     = otHrs    * hourlyRate * (emp.ot_multiplier || 1.5);
-    }
+    // Normal hours and OT calculated same as any day (Friday included)
+    const normalHrs = Math.min(totalHours, dutyHours);
+    const otHrs     = Math.max(0, totalHours - dutyHours);
+    const normalPay = normalHrs * hourlyRate;
+    const otPay     = otHrs * hourlyRate * (emp.ot_multiplier || 1.5);
+    // Friday bonus: extra pay on top of normal+OT, capped at basic duty hours × rate × 1.5
+    // If present < duty hours: bonus = actual hours × rate × 1.5
+    // If present ≥ duty hours: bonus = duty hours × rate × 1.5
+    const fridayPay = isFri ? (normalHrs * hourlyRate * 1.5) : 0;
 
     await db.from('daily_summary').upsert({
       employee_id:  empId,
       date:         date,
       total_hours:  parseFloat(totalHours.toFixed(2)),
       duty_hours:   emp.duty_hours,
-      normal_hours: isFri ? 0 : parseFloat(Math.min(totalHours,dutyHours).toFixed(2)),
-      ot_hours:     isFri ? 0 : parseFloat(Math.max(0,totalHours-dutyHours).toFixed(2)),
+      normal_hours: parseFloat(normalHrs.toFixed(2)),
+      ot_hours:     parseFloat(otHrs.toFixed(2)),
       is_friday:    isFri,
       hourly_rate:  parseFloat(hourlyRate.toFixed(4)),
       normal_pay:   parseFloat(normalPay.toFixed(2)),
