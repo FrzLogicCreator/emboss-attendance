@@ -828,7 +828,7 @@ async function initAdmin(){
   loadKPIs();
   loadLive();
   loadDeductions();
-  recalcAllFridaysThisMonth(); // silent background recalc of Friday rows using new formula
+  await recalcAllFridaysThisMonth(); // recalc Friday rows before anything else loads
   // Set default dates
   const today = todayStrSaudi();
   const weekAgo = new Date(getSaudiNow().getTime()-7*24*60*60*1000).toISOString().split('T')[0];
@@ -1520,25 +1520,24 @@ async function recalcDailySummary(empId, date, isFri, emp){
 // ══════════════════════════════════
 async function recalcAllFridaysThisMonth(){
   try {
-    const now = getSaudiNow();
-    const month1 = `${now.getUTCFullYear()}-${String(now.getUTCMonth()+1).padStart(2,'0')}-01`;
-    const today  = todayStrSaudi();
-    // Fetch all Friday rows in daily_summary for current month
+    const today = todayStrSaudi();
+    // Fetch ALL Friday rows in daily_summary (all months) with old formula signature:
+    // old formula set normal_hours=0 on Fridays, so fix any row where is_friday=true
     const{data:fridayRows} = await db.from('daily_summary')
-      .select('employee_id,date')
+      .select('employee_id,date,normal_hours')
       .eq('is_friday', true)
-      .gte('date', month1)
       .lte('date', today);
     if(!fridayRows || fridayRows.length === 0) return;
-    // Recalc each row using the new formula
-    for(const row of fridayRows){
+    // Only recalc rows that still have the old formula (normal_hours = 0)
+    const staleRows = fridayRows.filter(r => (r.normal_hours||0) === 0);
+    for(const row of staleRows){
       const emp = EMPLOYEES.find(e => e.id === row.employee_id);
       if(!emp) continue;
       await recalcDailySummary(row.employee_id, row.date, true, emp);
     }
-    console.log(`Silent Friday recalc: updated ${fridayRows.length} row(s)`);
+    console.log(`Friday recalc: fixed ${staleRows.length} stale row(s) of ${fridayRows.length} total`);
   } catch(err){
-    console.warn('Silent Friday recalc error:', err);
+    console.warn('Friday recalc error:', err);
   }
 }
 
