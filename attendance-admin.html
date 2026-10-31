@@ -931,7 +931,7 @@ async function loadKPIs(){
 
   // Month cost with breakdown
   const{data:monthSums} = await db.from('daily_summary')
-    .select('normal_pay,ot_pay,friday_pay,total_pay').gte('date',month1).lte('date',today);
+    .select('normal_pay,ot_pay,friday_pay,total_pay').gte('date',month1).lte('date',today).limit(5000);
   const monthCost   = (monthSums||[]).reduce((s,r)=>s+(r.total_pay||0),0);
   const basicTotal  = (monthSums||[]).reduce((s,r)=>s+(r.normal_pay||0),0);
   const otTotal     = (monthSums||[]).reduce((s,r)=>s+(r.ot_pay||0),0);
@@ -1526,7 +1526,7 @@ async function recalcAllFridaysThisMonth(){
     const{data:fridayRows} = await db.from('daily_summary')
       .select('employee_id,date,normal_hours')
       .eq('is_friday', true)
-      .lte('date', today);
+      .lte('date', today).limit(5000);
     if(!fridayRows || fridayRows.length === 0) return;
     // Only recalc rows that still have the old formula (normal_hours = 0)
     const staleRows = fridayRows.filter(r => (r.normal_hours||0) === 0);
@@ -1624,7 +1624,7 @@ async function loadSalary(){
   const to          = `${monthStr}-${String(daysInMonth).padStart(2,'0')}`;
 
   const{data:summaries} = await db.from('daily_summary')
-    .select('*').gte('date',from).lte('date',to);
+    .select('*').gte('date',from).lte('date',to).limit(5000);
   const{data:deds} = await db.from('deductions')
     .select('*').eq('belongs_to_month',month).eq('belongs_to_year',year);
 
@@ -2070,7 +2070,7 @@ async function loadCostChart(){
 
   const{data} = await db.from('daily_summary')
     .select('date,total_pay,employee_id,employees(branch_id)')
-    .gte('date',from).lte('date',today);
+    .gte('date',from).lte('date',today).limit(5000);
 
   CHART_DATA = data||[];
   renderCostChart();
