@@ -1154,7 +1154,9 @@ async function loadMgrPanel(){
   try{
     // Fetch all records for this branch in selected month
     const dateFrom = MGR_MONTH + '-01';
-    const dateTo   = MGR_MONTH + '-31'; // DB will cap at month end naturally
+    const [mY2, mM2] = MGR_MONTH.split('-').map(Number);
+    const lastDay  = new Date(mY2, mM2, 0).getDate(); // day 0 of next month = last day of this month
+    const dateTo   = MGR_MONTH + '-' + String(lastDay).padStart(2,'0');
     const{data, error} = await db.from('attendance')
       .select('id,employee_id,hours_worked,record_type,date')
       .eq('branch_id', BRANCH_ID)
