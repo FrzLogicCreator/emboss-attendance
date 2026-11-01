@@ -991,9 +991,19 @@ async function updateDailySummary(empId, date, isFri){
       console.warn('[EMBOSS][updateDailySummary] Employee missing salary/duty_hours:', empId, '— storing hours only, pay=0');
     }
 
-    const{data:records} = await db.from('attendance')
-      .select('hours_worked').eq('employee_id',empId).eq('date',date);
-    const totalHours = (records||[]).reduce((s,r)=>s+(r.hours_worked||0),0);
+    // Own records on this date that are NOT split (splits belong to previous day's month)
+    const{data:ownRecs} = await db.from('attendance')
+      .select('hours_worked').eq('employee_id',empId).eq('date',date)
+      .not('record_type','in','("split","auto_split")');
+    // Split records dated the NEXT day — they started this night and crossed midnight,
+    // so they are attributed to this date's month for salary purposes
+    const nextDate = new Date(date + 'T12:00:00Z');
+    nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+    const nextDateStr = nextDate.toISOString().split('T')[0];
+    const{data:splitRecs} = await db.from('attendance')
+      .select('hours_worked').eq('employee_id',empId).eq('date',nextDateStr)
+      .in('record_type',['split','auto_split']);
+    const totalHours = [...(ownRecs||[]),...(splitRecs||[])].reduce((s,r)=>s+(r.hours_worked||0),0);
 
     const d = new Date(date);
     const daysInMonth = new Date(d.getFullYear(),d.getMonth()+1,0).getDate();

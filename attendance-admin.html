@@ -1491,8 +1491,17 @@ async function deleteAttRecord(id, empName, date){
 }
 
 async function recalcDailySummary(empId, date, isFri, emp){
-  const{data:recs} = await db.from('attendance').select('hours_worked').eq('employee_id',empId).eq('date',date);
-  const totalHours = (recs||[]).reduce((s,r)=>s+(r.hours_worked||0),0);
+  // Own records on this date that are NOT split (splits belong to previous day's month)
+  const{data:ownRecs} = await db.from('attendance').select('hours_worked').eq('employee_id',empId).eq('date',date)
+    .not('record_type','in','("split","auto_split")');
+  // Split records dated the NEXT day — started this night, crossed midnight,
+  // attributed to this date's month for salary purposes
+  const nextDate = new Date(date + 'T12:00:00Z');
+  nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+  const nextDateStr = nextDate.toISOString().split('T')[0];
+  const{data:splitRecs} = await db.from('attendance').select('hours_worked').eq('employee_id',empId).eq('date',nextDateStr)
+    .in('record_type',['split','auto_split']);
+  const totalHours = [...(ownRecs||[]),...(splitRecs||[])].reduce((s,r)=>s+(r.hours_worked||0),0);
   const d = new Date(date);
   const daysInMonth = new Date(d.getFullYear(),d.getMonth()+1,0).getDate();
   const hourlyRate  = emp.basic_salary/(emp.duty_hours*daysInMonth);
