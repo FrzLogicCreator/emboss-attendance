@@ -1531,7 +1531,8 @@ async function recalcDailySummary(empId, date, isFri, emp){
   // Split hours before 5am Saudi (02:00 UTC) do NOT count toward friday_pay
   let fridayPay = 0;
   if (isFri) {
-    const friday5amUTC = new Date(date + 'T02:00:00Z');
+    // Split records are dated nextDateStr (Saturday). 5am Saudi = 02:00 UTC on that same date.
+    const friday5amUTC = new Date(nextDateStr + 'T02:00:00Z');
     const splitHoursBefore5am = (splitRecs||[])
       .filter(r => r.clock_out && new Date(r.clock_out).getTime() < friday5amUTC.getTime())
       .reduce((s,r) => s + (r.hours_worked||0), 0);
