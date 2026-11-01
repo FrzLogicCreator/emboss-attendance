@@ -1167,22 +1167,36 @@ async function loadMgrPanel(){
     const [mY2, mM2] = MGR_MONTH.split('-').map(Number);
     const lastDay  = new Date(mY2, mM2, 0).getDate(); // day 0 of next month = last day of this month
     const dateTo   = MGR_MONTH + '-' + String(lastDay).padStart(2,'0');
-    const{data, error} = await db.from('attendance')
-      .select('id,employee_id,hours_worked,record_type,date')
-      .eq('branch_id', BRANCH_ID)
-      .gte('date', dateFrom)
-      .lte('date', dateTo)
-      .order('date',{ascending:true});
+    const [attRes2, dsRes2] = await Promise.all([
+      db.from('attendance')
+        .select('id,employee_id,hours_worked,record_type,date')
+        .eq('branch_id', BRANCH_ID)
+        .gte('date', dateFrom)
+        .lte('date', dateTo)
+        .order('date',{ascending:true}),
+      db.from('daily_summary')
+        .select('employee_id,ot_hours')
+        .in('employee_id', EMPLOYEES.map(e=>e.id))
+        .gte('date', dateFrom)
+        .lte('date', dateTo)
+    ]);
+    const error = attRes2.error || dsRes2.error;
     if(error) throw error;
+    const data = attRes2.data;
 
-    // Count records + total hours per employee
+    // Count records + total hours per employee (from attendance)
     const byEmp = {};
     (data||[]).forEach(r=>{
-      if(!byEmp[r.employee_id]) byEmp[r.employee_id]={count:0,hours:0,hasAutoClose:false};
+      if(!byEmp[r.employee_id]) byEmp[r.employee_id]={count:0,hours:0,otHours:0,hasAutoClose:false};
       byEmp[r.employee_id].count++;
       byEmp[r.employee_id].hours += (r.hours_worked||0);
       const rt = (r.record_type||'').toLowerCase();
       if(rt === 'auto_close' || rt === 'auto-close' || rt === 'auto_split') byEmp[r.employee_id].hasAutoClose = true;
+    });
+
+    // Sum OT hours per employee from daily_summary (already has correct split attribution)
+    (dsRes2.data||[]).forEach(ds=>{
+      if(byEmp[ds.employee_id]) byEmp[ds.employee_id].otHours += (ds.ot_hours||0);
     });
 
     const withRecs    = EMPLOYEES.filter(e=>byEmp[e.id]);
@@ -1204,7 +1218,7 @@ async function loadMgrPanel(){
       html += `<div class="mgr-emp-row" onclick="loadMgrEmpDetail('${emp.id}','${nm}')">
         <div style="flex:1;min-width:0">
           <div class="mgr-emp-name">${emp.name}${warn}</div>
-          <div class="mgr-emp-status">${info.count} records · ${fmtHrs(info.hours)}</div>
+          <div class="mgr-emp-status">${info.count} records · ${fmtHrs(info.hours)}${info.otHours > 0 ? ` · <span style="color:#1d4ed8;font-weight:700">OT ${fmtHrs(info.otHours)}</span>` : ''}</div>
         </div>
         <div style="font-size:1.2rem;color:var(--slate)">›</div>
       </div>`;
@@ -1241,30 +1255,76 @@ async function loadMgrEmpDetail(empId, empName){
   go('s-mgr-emp');
 
   try{
+    // Calculate proper last day (fix for months with < 31 days)
+    const [mYd, mMd] = MGR_MONTH.split('-').map(Number);
+    const lastDayD = new Date(mYd, mMd, 0).getDate();
     const dateFrom = MGR_MONTH + '-01';
-    const dateTo   = MGR_MONTH + '-31';
-    const{data, error} = await db.from('attendance')
-      .select('*')
-      .eq('employee_id', empId)
-      .gte('date', dateFrom)
-      .lte('date', dateTo)
-      .order('date',{ascending:true})
-      .order('clock_in',{ascending:true});
-    if(error) throw error;
+    const dateTo   = MGR_MONTH + '-' + String(lastDayD).padStart(2,'0');
 
-    const recs = data || [];
-    if(!recs.length){
+    // Also fetch the first day of next month to catch split/auto_split records
+    // that belong to the last shift of this month (midnight crossings)
+    const nextMonthDate = new Date(mYd, mMd, 1); // 1st of next month
+    const nextMonthStr  = nextMonthDate.getFullYear() + '-' +
+                          String(nextMonthDate.getMonth()+1).padStart(2,'0') + '-01';
+
+    const [attRes, dsRes] = await Promise.all([
+      db.from('attendance')
+        .select('*')
+        .eq('employee_id', empId)
+        .gte('date', dateFrom)
+        .lte('date', nextMonthStr)   // include next month's 1st for split records
+        .order('date',{ascending:true})
+        .order('clock_in',{ascending:true}),
+      db.from('daily_summary')
+        .select('date,ot_hours,total_hours,normal_hours,ot_pay')
+        .eq('employee_id', empId)
+        .gte('date', dateFrom)
+        .lte('date', dateTo)
+    ]);
+    if(attRes.error) throw attRes.error;
+    if(dsRes.error)  throw dsRes.error;
+
+    // Build OT map: date → ot_hours from daily_summary
+    const otMap = {};
+    (dsRes.data||[]).forEach(ds=>{ otMap[ds.date] = ds.ot_hours || 0; });
+
+    const allRecs = attRes.data || [];
+
+    // Group records by DISPLAY date:
+    // - split/auto_split records on nextMonthStr belong to lastDayD of current month
+    // - split/auto_split records on any date D belong to D-1
+    // - normal records stay on their own date
+    // Only include records that map to a date within this month
+    const byDate = {};
+    const dateOrderSet = new Set();
+
+    allRecs.forEach(r=>{
+      let displayDate;
+      const rt = (r.record_type||'').toLowerCase();
+      if(rt === 'split' || rt === 'auto_split'){
+        // Shift split records to the previous day (originating shift date)
+        const prev = new Date(r.date + 'T12:00:00Z');
+        prev.setUTCDate(prev.getUTCDate() - 1);
+        displayDate = prev.toISOString().slice(0,10);
+        // Only show if displayDate is within this month
+        if(displayDate < dateFrom || displayDate > dateTo) return;
+      } else {
+        displayDate = r.date;
+        // Only show if within this month (exclude next month's non-split records)
+        if(displayDate < dateFrom || displayDate > dateTo) return;
+      }
+      if(!byDate[displayDate]) byDate[displayDate] = [];
+      byDate[displayDate].push({...r, _displayDate: displayDate});
+      dateOrderSet.add(displayDate);
+    });
+
+    // Sort dates chronologically
+    const dateOrder = [...dateOrderSet].sort();
+
+    if(!dateOrder.length){
       list.innerHTML = '<div style="text-align:center;padding:24px;color:var(--slate)">No records this month</div>';
       return;
     }
-
-    // Group by date
-    const byDate = {};
-    const dateOrder = [];
-    recs.forEach(r=>{
-      if(!byDate[r.date]){ byDate[r.date]=[]; dateOrder.push(r.date); }
-      byDate[r.date].push(r);
-    });
 
     const dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
@@ -1276,6 +1336,12 @@ async function loadMgrEmpDetail(empId, empName){
       const dayLabel = `${date} (${dayName})`;
       const dayTag   = isFri
         ? `<span style="font-size:.65rem;background:#fce7f3;color:#9d174d;padding:2px 7px;border-radius:20px;font-weight:700;margin-left:4px">Friday</span>`
+        : '';
+
+      // OT for this day from daily_summary
+      const otHrs = otMap[date] || 0;
+      const otTag = otHrs > 0
+        ? `<span style="font-size:.65rem;background:#dbeafe;color:#1d4ed8;padding:2px 7px;border-radius:20px;font-weight:700;margin-left:4px">OT ${fmtHrs(otHrs)}</span>`
         : '';
 
       const recHtml = dayRecs.map(r=>{
@@ -1298,20 +1364,27 @@ async function loadMgrEmpDetail(empId, empName){
           badge = `<span style="font-size:.68rem;background:var(--green-lt);color:var(--green);padding:2px 7px;border-radius:20px;font-weight:700">added</span>`;
         }
 
+        // For split records, show originating date info
+        const isSplit = rt === 'split' || rt === 'auto_split';
+        const splitNote = isSplit
+          ? `<span style="font-size:.68rem;color:var(--slate)">(next-day portion shown here)</span>`
+          : '';
+
         const safeEmp = empName.replace(/'/g,"\\'");
+        // Use r.date for edit (the actual DB date), not displayDate
         return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">
           <div>
             <div style="font-size:.88rem;font-weight:700;color:var(--green)">${cin} → ${cout}</div>
             <div style="font-size:.75rem;color:var(--slate);margin-top:3px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-              ${h ? `<span>${h}</span>` : ''} ${badge}
+              ${h ? `<span>${h}</span>` : ''} ${badge} ${splitNote}
             </div>
           </div>
-          <button class="btn-mgr btn-mgr-edit" onclick="openMgrEdit('${r.id}','${empId}','${safeEmp}','${date}')">Edit</button>
+          <button class="btn-mgr btn-mgr-edit" onclick="openMgrEdit('${r.id}','${empId}','${safeEmp}','${r.date}')">Edit</button>
         </div>`;
       }).join('');
 
       return `<div style="margin:0 16px 4px">
-        <div style="font-size:.8rem;font-weight:800;color:var(--slate);padding:14px 0 4px;display:flex;align-items:center">${dayLabel}${dayTag}</div>
+        <div style="font-size:.8rem;font-weight:800;color:var(--slate);padding:14px 0 4px;display:flex;align-items:center;flex-wrap:wrap;gap:4px">${dayLabel}${dayTag}${otTag}</div>
         ${recHtml}
       </div>`;
     }).join('');
