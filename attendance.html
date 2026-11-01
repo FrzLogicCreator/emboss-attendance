@@ -1367,7 +1367,7 @@ async function loadMgrEmpDetail(empId, empName){
         // For split records, show originating date info
         const isSplit = rt === 'split' || rt === 'auto_split';
         const splitNote = isSplit
-          ? `<span style="font-size:.68rem;color:var(--slate)">(next-day portion shown here)</span>`
+          ? `<span style="font-size:.68rem;color:var(--slate)">(tail of previous night's shift)</span>`
           : '';
 
         const safeEmp = empName.replace(/'/g,"\\'");
