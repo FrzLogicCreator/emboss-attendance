@@ -1640,6 +1640,7 @@ function downloadSelectedPhotos(){
 // SALARY TAB
 // ══════════════════════════════════
 let SALARY_EXPORT_DATA = []; // stores last calculated salary rows for CSV export
+let SALARY_EXPORT_META = null; // {month, year, branch} of last calculation
 
 async function loadSalary(){
   const month  = parseInt(document.getElementById('sal-month').value);
@@ -1661,6 +1662,7 @@ async function loadSalary(){
 
   let totBasic=0,totOT=0,totFri=0,totAllow=0,totDed=0,totBon=0,totFinal=0;
   SALARY_EXPORT_DATA = []; // reset export cache
+  SALARY_EXPORT_META = { month, year, branch };
 
   const tbody = document.getElementById('sal-tbody');
   tbody.innerHTML = emps.map(e=>{
@@ -1733,10 +1735,21 @@ async function loadSalary(){
 }
 
 function exportSalaryCSV(){
-  if(!SALARY_EXPORT_DATA.length){ showToast('Calculate salary first','t-red'); return; }
+  if(!SALARY_EXPORT_DATA.length || !SALARY_EXPORT_META){
+    showToast('Click Calculate first before exporting','t-red'); return;
+  }
 
-  const month = document.getElementById('sal-month').value;
-  const year  = document.getElementById('sal-year').value;
+  const month  = document.getElementById('sal-month').value;
+  const year   = document.getElementById('sal-year').value;
+  const branch = document.getElementById('sal-branch').value;
+
+  // Guard: if user changed month/year/branch after last Calculate, warn them
+  if(String(SALARY_EXPORT_META.month) !== String(month) ||
+     String(SALARY_EXPORT_META.year)  !== String(year)  ||
+     String(SALARY_EXPORT_META.branch)!== String(branch)){
+    showToast('⚠️ Filters changed — please Calculate again before exporting','t-red');
+    return;
+  }
 
   const headers = [
     'Employee','Branch','Basic Salary','Hourly Rate',
