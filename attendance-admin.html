@@ -1197,10 +1197,19 @@ async function viewHistory(empId, empName){
     return;
   }
 
-  // Group attendance records by month-key
+  // Group attendance records by month-key.
+  // Split/auto_split records are dated the NEXT calendar day (they cross midnight),
+  // but they belong to the previous day's shift — so attribute them to the prev-day month.
   const monthRecs = {};
   recs.forEach(r=>{
-    const key = r.date?.slice(0,7)||'unknown';
+    let key;
+    if(r.record_type==='split' || r.record_type==='auto_split'){
+      const prevDay = new Date(r.date + 'T12:00:00Z');
+      prevDay.setUTCDate(prevDay.getUTCDate() - 1);
+      key = prevDay.toISOString().slice(0,7);
+    } else {
+      key = r.date?.slice(0,7)||'unknown';
+    }
     if(!monthRecs[key]) monthRecs[key]=[];
     monthRecs[key].push(r);
   });
@@ -1235,8 +1244,16 @@ async function viewHistory(empId, empName){
     const basicHrs   = mSumRows.reduce((s,r)=>s+(r.normal_hours||0),0);
     const finalSal   = normalPay + otPay + friPay + (emp?.allowance||0) - totalDed + totalBon;
 
-    // Unique calendar days worked (not record count — midnight splits = 2 records, 1 day)
-    const uniqueDays = new Set(mRecs.map(r=>r.date)).size;
+    // Unique calendar days worked (not record count — midnight splits = 2 records, 1 day).
+    // For splits, use the previous day (the actual shift date) to avoid double-counting.
+    const uniqueDays = new Set(mRecs.map(r=>{
+      if(r.record_type==='split'||r.record_type==='auto_split'){
+        const prev = new Date(r.date+'T12:00:00Z');
+        prev.setUTCDate(prev.getUTCDate()-1);
+        return prev.toISOString().slice(0,10);
+      }
+      return r.date;
+    })).size;
 
     // Cache for CSV export
     const cacheKey = `${empId}_${mKey}`;
@@ -2213,7 +2230,13 @@ function exportHistoryCSV(empId, empName, mKey){
   rows.push(['Basic Salary (contract)', 'SAR '+(emp?.basic_salary||0).toFixed(0)]);
   rows.push(['Hourly Rate', 'SAR '+hrRate.toFixed(4)+'/hr']);
   rows.push(['Days in Month', daysInMo]);
-  rows.push(['Days Present', new Set(mRecs.map(r=>r.date)).size]);
+  rows.push(['Days Present', new Set(mRecs.map(r=>{
+    if(r.record_type==='split'||r.record_type==='auto_split'){
+      const prev=new Date(r.date+'T12:00:00Z'); prev.setUTCDate(prev.getUTCDate()-1);
+      return prev.toISOString().slice(0,10);
+    }
+    return r.date;
+  })).size]);
   rows.push(['Basic Hrs Worked', fmtHrs(basicHrs), 'SAR '+normalPay.toFixed(2)]);
   rows.push(['OT Hrs', fmtHrs(otHrs), 'SAR '+otPay.toFixed(2)]);
   rows.push(['Friday Hrs', fmtHrs(friHrs), 'SAR '+friPay.toFixed(2)]);
