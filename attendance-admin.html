@@ -1537,17 +1537,28 @@ async function deleteAttRecord(id, empName, date){
 }
 
 async function recalcDailySummary(empId, date, isFri, emp){
-  // Own records on this date that are NOT split (splits belong to previous day's month)
-  const{data:ownRecs} = await db.from('attendance').select('hours_worked').eq('employee_id',empId).eq('date',date)
-    .not('record_type','in','("split","auto_split")');
-  // Split records dated the NEXT day — started this night, crossed midnight,
-  // attributed to this date's month for salary purposes
-  const nextDate = new Date(date + 'T12:00:00Z');
-  nextDate.setUTCDate(nextDate.getUTCDate() + 1);
-  const nextDateStr = nextDate.toISOString().split('T')[0];
-  const{data:splitRecs} = await db.from('attendance').select('hours_worked,clock_out').eq('employee_id',empId).eq('date',nextDateStr)
-    .in('record_type',['split','auto_split']);
-  const totalHours = [...(ownRecs||[]),...(splitRecs||[])].reduce((s,r)=>s+(r.hours_worked||0),0);
+  // All records on this date — normal records AND split records dated on this day.
+  // Split records dated D were created by a midnight crossing starting on D-1 night,
+  // so they naturally belong to day D.
+  const{data:ownRecs} = await db.from('attendance').select('hours_worked,clock_out').eq('employee_id',empId).eq('date',date);
+
+  // MONTH-END EXCEPTION: last day of month also pulls in splits dated the 1st of next month.
+  const d0 = new Date(date + 'T12:00:00Z');
+  const lastDayOfMonth = new Date(d0.getFullYear(), d0.getMonth()+1, 0).getDate();
+  const isLastDayOfMonth = d0.getUTCDate() === lastDayOfMonth;
+  let monthEndSplits = [];
+  let nextDateStr = null;
+  if(isLastDayOfMonth){
+    const nextDate = new Date(date + 'T12:00:00Z');
+    nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+    nextDateStr = nextDate.toISOString().split('T')[0];
+    const{data:mes} = await db.from('attendance').select('hours_worked,clock_out').eq('employee_id',empId).eq('date',nextDateStr)
+      .in('record_type',['split','auto_split']);
+    monthEndSplits = mes || [];
+  }
+  // splitRecs = month-end splits only (used in Friday 5am pay calculation below)
+  const splitRecs = monthEndSplits;
+  const totalHours = [...(ownRecs||[]),...monthEndSplits].reduce((s,r)=>s+(r.hours_worked||0),0);
   const d = new Date(date);
   const daysInMonth = new Date(d.getFullYear(),d.getMonth()+1,0).getDate();
   const hourlyRate  = emp.basic_salary/(emp.duty_hours*daysInMonth);
@@ -1556,16 +1567,21 @@ async function recalcDailySummary(empId, date, isFri, emp){
   const otHrs     = Math.max(0, totalHours - emp.duty_hours);
   const normalPay = normalHrs * hourlyRate;
   const otPay     = otHrs * hourlyRate * (emp.ot_multiplier || 1.5);
-  // Friday bonus: only count split hours that clocked out at/after 5am Saudi (02:00 UTC)
-  // Split hours before 5am Saudi (02:00 UTC) do NOT count toward friday_pay
+  // Friday bonus: extra pay on top of normal pay.
+  // For month-end Fridays: exclude split hours that clocked out before 5am Saudi (02:00 UTC)
+  // since those overnight hours are pre-midnight and don't qualify for Friday premium.
+  // For regular Fridays: no shifted splits, so full normalHrs get the Friday bonus.
   let fridayPay = 0;
   if (isFri) {
-    // Split records are dated nextDateStr (Saturday). 5am Saudi = 02:00 UTC on that same date.
-    const friday5amUTC = new Date(nextDateStr + 'T02:00:00Z');
-    const splitHoursBefore5am = (splitRecs||[])
-      .filter(r => r.clock_out && new Date(r.clock_out).getTime() < friday5amUTC.getTime())
-      .reduce((s,r) => s + (r.hours_worked||0), 0);
-    const fridayNormalHrs = Math.max(0, normalHrs - splitHoursBefore5am);
+    let fridayNormalHrs = normalHrs;
+    if(nextDateStr && splitRecs.length > 0){
+      // Month-end Friday: apply 5am Saudi cutoff to shifted splits
+      const friday5amUTC = new Date(nextDateStr + 'T02:00:00Z');
+      const splitHoursBefore5am = splitRecs
+        .filter(r => r.clock_out && new Date(r.clock_out).getTime() < friday5amUTC.getTime())
+        .reduce((s,r) => s + (r.hours_worked||0), 0);
+      fridayNormalHrs = Math.max(0, normalHrs - splitHoursBefore5am);
+    }
     fridayPay = fridayNormalHrs * hourlyRate * 1.5;
   }
   await db.from('daily_summary').upsert({

@@ -624,10 +624,16 @@ async function _doSelectEmployee(id, name, skipManagerCheck=false){
             record_type:  'auto_split' // midnight split that was also auto-closed
           }]);
 
-          // Update daily summary for Day 1 only.
-          // Day 2's split hours belong to Day 1's DS (D-1 rule).
-          // Day 2's own DS will be recalculated when that shift clocks out.
+          // Update Day 1 DS always.
+          // Update Day 2 DS for regular days — split is dated Day 2 and counts there.
+          // Month-end exception: if Day 1 is last day of month, Day 1's DS already
+          // pulls in the split; skip Day 2 update to avoid double-counting in next month.
           updateDailySummary(id, openRec.date, openRec.is_friday).catch(()=>{});
+          const _ac1 = new Date(openRec.date + 'T12:00:00Z');
+          const _acLast = new Date(_ac1.getFullYear(), _ac1.getMonth()+1, 0).getDate();
+          if(_ac1.getUTCDate() !== _acLast){
+            updateDailySummary(id, day2Str, isFriday2).catch(()=>{});
+          }
           console.info('[EMBOSS][autoClose] Midnight split auto-close | Day1:', openRec.date, hoursDay1.toFixed(2)+'h | Day2:', day2Str, hoursDay2.toFixed(2)+'h | Day2 Friday:', isFriday2);
         } else {
           // Simple auto-close, no midnight crossing
@@ -940,9 +946,16 @@ async function saveAttendance(){
           record_type:  'split'
         }]);
 
-        // Update Day 1 DS only. Day 2 split hours belong to Day 1 (D-1 rule).
-        // Day 2's DS recalcs when that shift clocks out.
+        // Update Day 1 DS always (its own hours).
+        // Update Day 2 DS for regular days — the split record is dated Day 2 and counts there.
+        // For month-end (Day 1 = last day of month), Day 1's DS already pulls the split in,
+        // so no separate Day 2 update needed (it would put the hours in the wrong month).
         updateDailySummary(SELECTED.id, openRec.date, openRec.is_friday).catch(()=>{});
+        const _d1 = new Date(openRec.date + 'T12:00:00Z');
+        const _lastDay = new Date(_d1.getFullYear(), _d1.getMonth()+1, 0).getDate();
+        if(_d1.getUTCDate() !== _lastDay){
+          updateDailySummary(SELECTED.id, day2Str, isFriday2).catch(()=>{});
+        }
 
         clearTimeout(safety);
         showDone('🕐', SELECTED.name,
@@ -993,19 +1006,28 @@ async function updateDailySummary(empId, date, isFri){
       console.warn('[EMBOSS][updateDailySummary] Employee missing salary/duty_hours:', empId, '— storing hours only, pay=0');
     }
 
-    // Own records on this date that are NOT split (splits belong to previous day's month)
+    // Own records on this date — includes normal records AND split records dated on this day.
+    // Split records dated on day D were created by a midnight crossing that STARTED on D-1 night,
+    // so they naturally belong to day D (the day they clock out on).
     const{data:ownRecs} = await db.from('attendance')
-      .select('hours_worked').eq('employee_id',empId).eq('date',date)
-      .not('record_type','in','("split","auto_split")');
-    // Split records dated the NEXT day — they started this night and crossed midnight,
-    // so they are attributed to this date's month for salary purposes
-    const nextDate = new Date(date + 'T12:00:00Z');
-    nextDate.setUTCDate(nextDate.getUTCDate() + 1);
-    const nextDateStr = nextDate.toISOString().split('T')[0];
-    const{data:splitRecs} = await db.from('attendance')
-      .select('hours_worked').eq('employee_id',empId).eq('date',nextDateStr)
-      .in('record_type',['split','auto_split']);
-    const totalHours = [...(ownRecs||[]),...(splitRecs||[])].reduce((s,r)=>s+(r.hours_worked||0),0);
+      .select('hours_worked').eq('employee_id',empId).eq('date',date);
+
+    // MONTH-END EXCEPTION: if date is the last day of its month, also pull in split records
+    // dated the 1st of the next month — those overnight hours belong to this month's last day.
+    const d0 = new Date(date + 'T12:00:00Z');
+    const lastDayOfMonth = new Date(d0.getFullYear(), d0.getMonth()+1, 0).getDate();
+    const isLastDayOfMonth = d0.getUTCDate() === lastDayOfMonth;
+    let monthEndSplits = [];
+    if(isLastDayOfMonth){
+      const nextDate = new Date(date + 'T12:00:00Z');
+      nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+      const nextDateStr = nextDate.toISOString().split('T')[0];
+      const{data:mes} = await db.from('attendance')
+        .select('hours_worked').eq('employee_id',empId).eq('date',nextDateStr)
+        .in('record_type',['split','auto_split']);
+      monthEndSplits = mes || [];
+    }
+    const totalHours = [...(ownRecs||[]),...monthEndSplits].reduce((s,r)=>s+(r.hours_worked||0),0);
 
     const d = new Date(date);
     const daysInMonth = new Date(d.getFullYear(),d.getMonth()+1,0).getDate();
@@ -1304,10 +1326,17 @@ async function loadMgrEmpDetail(empId, empName){
       let displayDate;
       const rt = (r.record_type||'').toLowerCase();
       if(rt === 'split' || rt === 'auto_split'){
-        // Shift split records to the previous day (originating shift date)
-        const prev = new Date(r.date + 'T12:00:00Z');
-        prev.setUTCDate(prev.getUTCDate() - 1);
-        displayDate = prev.toISOString().slice(0,10);
+        const splitDateObj = new Date(r.date + 'T12:00:00Z');
+        const isFirstOfMonth = splitDateObj.getUTCDate() === 1;
+        if(isFirstOfMonth){
+          // Month-end exception: split dated the 1st belongs to the last day of the previous month
+          const prev = new Date(r.date + 'T12:00:00Z');
+          prev.setUTCDate(prev.getUTCDate() - 1);
+          displayDate = prev.toISOString().slice(0,10);
+        } else {
+          // Regular split: display on its own date (the day it clocked out)
+          displayDate = r.date;
+        }
         // Only show if displayDate is within this month
         if(displayDate < dateFrom || displayDate > dateTo) return;
       } else {
