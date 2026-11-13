@@ -624,9 +624,10 @@ async function _doSelectEmployee(id, name, skipManagerCheck=false){
             record_type:  'auto_split' // midnight split that was also auto-closed
           }]);
 
-          // Update daily summary for BOTH days
+          // Update daily summary for Day 1 only.
+          // Day 2's split hours belong to Day 1's DS (D-1 rule).
+          // Day 2's own DS will be recalculated when that shift clocks out.
           updateDailySummary(id, openRec.date, openRec.is_friday).catch(()=>{});
-          updateDailySummary(id, day2Str, isFriday2).catch(()=>{});
           console.info('[EMBOSS][autoClose] Midnight split auto-close | Day1:', openRec.date, hoursDay1.toFixed(2)+'h | Day2:', day2Str, hoursDay2.toFixed(2)+'h | Day2 Friday:', isFriday2);
         } else {
           // Simple auto-close, no midnight crossing
@@ -939,8 +940,9 @@ async function saveAttendance(){
           record_type:  'split'
         }]);
 
+        // Update Day 1 DS only. Day 2 split hours belong to Day 1 (D-1 rule).
+        // Day 2's DS recalcs when that shift clocks out.
         updateDailySummary(SELECTED.id, openRec.date, openRec.is_friday).catch(()=>{});
-        updateDailySummary(SELECTED.id, day2Str, isFriday2).catch(()=>{});
 
         clearTimeout(safety);
         showDone('🕐', SELECTED.name,

@@ -284,6 +284,7 @@ tr:hover td{background:#f9f7f4}
     <button class="tab-btn" onclick="switchTab('salary')">💰 Salary</button>
     <button class="tab-btn" onclick="switchTab('branches')">📍 Branches</button>
     <button class="tab-btn" onclick="switchTab('mgrlog')">🔍 Manager Log</button>
+    <button class="tab-btn" onclick="switchTab('recalc')">🔧 Recalc DS</button>
   </div>
 
   <!-- TAB: LIVE VIEW -->
@@ -564,6 +565,34 @@ tr:hover td{background:#f9f7f4}
           </tbody>
         </table>
       </div>
+    </div>
+  </div>
+
+  <!-- TAB: RECALC DS -->
+  <div class="tab-panel" id="tab-recalc">
+    <div class="card">
+      <div class="card-title">Recalculate Daily Summary</div>
+      <p style="font-size:.83rem;color:var(--slate);margin-bottom:16px">
+        Use this if you notice wrong hours or missing OT for any employee. Select a date range and click Recalc — it will re-run the daily summary calculation for <strong>all employees</strong> for every day in the range.
+      </p>
+      <div class="form-grid" style="max-width:480px">
+        <div class="fg">
+          <label>From Date</label>
+          <input type="date" id="recalc-from">
+        </div>
+        <div class="fg">
+          <label>To Date</label>
+          <input type="date" id="recalc-to">
+        </div>
+      </div>
+      <div style="margin-top:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <button class="btn btn-green" id="recalc-btn" onclick="runRecalcRange()">
+          <span class="spin"></span>🔄 Recalc All Employees
+        </button>
+        <button class="btn btn-outline btn-sm" onclick="setRecalcToday()">Set to Today</button>
+        <button class="btn btn-outline btn-sm" onclick="setRecalcThisMonth()">Set to This Month</button>
+      </div>
+      <div id="recalc-log" style="margin-top:16px;font-size:.8rem;color:var(--slate);white-space:pre-wrap;max-height:300px;overflow-y:auto;background:var(--pearl);border-radius:8px;padding:12px;display:none"></div>
     </div>
   </div>
 </div>
@@ -1575,6 +1604,65 @@ async function recalcAllFridaysThisMonth(){
   } catch(err){
     console.warn('Friday recalc error:', err);
   }
+}
+
+// ══════════════════════════════════
+// DATE-RANGE RECALC (manual tool)
+// ══════════════════════════════════
+function setRecalcToday(){
+  const t = todayStrSaudi();
+  document.getElementById('recalc-from').value = t;
+  document.getElementById('recalc-to').value   = t;
+}
+function setRecalcThisMonth(){
+  const t = todayStrSaudi();
+  const y = t.slice(0,4), m = t.slice(5,7);
+  document.getElementById('recalc-from').value = `${y}-${m}-01`;
+  document.getElementById('recalc-to').value   = t;
+}
+
+async function runRecalcRange(){
+  const fromVal = document.getElementById('recalc-from').value;
+  const toVal   = document.getElementById('recalc-to').value;
+  if(!fromVal || !toVal){ showToast('Please set both From and To dates','t-red'); return; }
+  if(fromVal > toVal){ showToast('From date must be before To date','t-red'); return; }
+
+  const btn = document.getElementById('recalc-btn');
+  const log = document.getElementById('recalc-log');
+  btn.classList.add('busy'); btn.disabled = true;
+  log.style.display = 'block';
+  log.textContent = 'Starting recalc...\n';
+
+  // Build list of all dates in range
+  const dates = [];
+  const cur = new Date(fromVal + 'T12:00:00Z');
+  const end = new Date(toVal   + 'T12:00:00Z');
+  while(cur <= end){
+    dates.push(cur.toISOString().slice(0,10));
+    cur.setUTCDate(cur.getUTCDate() + 1);
+  }
+
+  let total = 0, errors = 0;
+  for(const date of dates){
+    const dow = new Date(date + 'T12:00:00Z').getUTCDay();
+    const isFri = (dow === 5);
+    for(const emp of EMPLOYEES){
+      try{
+        await recalcDailySummary(emp.id, date, isFri, emp);
+        total++;
+      } catch(e){
+        errors++;
+        log.textContent += `  ✗ ${emp.name} ${date}: ${e.message}\n`;
+      }
+    }
+    log.textContent += `✓ ${date} — ${EMPLOYEES.length} employees done\n`;
+    log.scrollTop = log.scrollHeight;
+  }
+
+  log.textContent += `\nDone. ${total} summaries recalculated${errors ? `, ${errors} errors` : ' with no errors'}.`;
+  log.scrollTop = log.scrollHeight;
+  btn.classList.remove('busy'); btn.disabled = false;
+  showToast(`Recalc complete: ${total} records updated ✅`,'t-green');
 }
 
 // ══════════════════════════════════
